@@ -1,4 +1,21 @@
+"use client"
+import { useAuth } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+
 export default function Hero() {
+
+    const { isSignedIn, isLoaded } = useAuth();
+    const router = useRouter();
+
+    useEffect(() => {
+        if (isLoaded && isSignedIn) {
+            router.push("/callback");
+        }
+    }, [isLoaded, isSignedIn, router]);
+
+    if (!isLoaded || isSignedIn) return null;
+
   return (
         <section className="w-full py-24 md:py-32">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-12">

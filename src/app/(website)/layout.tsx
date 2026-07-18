@@ -6,6 +6,7 @@ type Props = {
 }
 
 const Layout = ({ children }: Props) => {
+    
     return(
         <div className='flex flex-col py-5 px-6 xl:px-0 container'>
             <LandingPageNavbar/>
