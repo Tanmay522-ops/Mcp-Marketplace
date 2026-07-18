@@ -1,0 +1,345 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+enum WorkspaceRole {
+  OWNER 
+  ADMIN 
+  MEMBER 
+}
+
+enum ToolVisibility { 
+  PUBLIC
+  PRIVATE
+}
+
+enum ToolVersionStatus { 
+  DRAFT
+  TESTING
+  PUBLISHED 
+  FAILED
+  ARCHIVED
+}
+
+enum InstallMethod { 
+  MANUAL
+  GITHUB
+}
+
+enum InviteStatus { 
+  PENDING 
+  ACCEPTED
+  DECLINED
+}
+
+enum ExecutionType { 
+  SMOKE_TEST 
+  TRY_LIVE 
+}
+
+enum ExecutionStatus { 
+  PENDING
+  RUNNING 
+  PASSED
+  FAILED 
+  TIMED_OUT
+}
+
+enum SandboxProvider { 
+  E2B 
+  MODAL
+}
+
+enum NotificationType {
+  INVITE
+  REVIEW
+  EXECUTION_FAILED
+  TOOL_PUBLISHED
+  TOOL_INSTALLED
+}
+
+model User {
+  id                String           @id @default(uuid())
+  clerkId           String           @unique
+  email             String           @unique
+  firstName         String?
+  lastName          String?
+  imageUrl          String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  ownedWorkspaces   Workspace[]      @relation("WorkspaceOwner")
+  memberships       Member[]
+  publishedVersions ToolVersion[]    @relation("PublishedBy")
+  installs          InstallRecord[]  @relation("InstalledBy")
+  reviews           Review[]
+  notifications     Notification[]
+  sentInvites       Invite[]         @relation("InviteSender")
+  receivedInvites   Invite[]         @relation("InviteReceiver")
+  executions        ToolExecution[]
+  quotas            ExecutionQuota[]
+}
+
+model Workspace {
+  id         String            @id @default(uuid())
+  name       String
+  slug       String            @unique
+  image      String?
+  ownerId    String
+  owner      User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  members    Member[]
+  tools      Tool[]
+  installs   InstallRecord[]
+  github     GithubConnection?
+  invites    Invite[]
+  executions ToolExecution[]
+  quotas     ExecutionQuota[]
+
+  @@index([ownerId])
+}
+
+model Member {
+  id          String        @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  joinedAt    DateTime      @default(now())
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model GithubConnection {
+  id             String   @id @default(uuid())
+  workspaceId    String   @unique
+  installationId String
+  accountName    String
+  createdAt      DateTime @default(now())
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Tool {
+  id               String          @id @default(uuid())
+  workspaceId      String
+  name             String
+  slug             String          @unique
+  description      String
+  repositoryUrl    String?
+  websiteUrl       String?
+  documentationUrl String?
+  logoUrl          String?
+  visibility       ToolVisibility  @default(PUBLIC)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  versions         ToolVersion[]
+  categories       ToolCategory[]
+  tags             ToolTag[]
+  reviews          Review[]
+  analytics        ToolAnalytics?
+
+  @@index([workspaceId])
+}
+
+model ToolVersion {
+  id             String                  @id @default(uuid())
+  toolId         String
+  version        String
+  endpoint       String
+  inputSchema    Json
+  outputSchema   Json
+  exampleInput   Json
+  exampleOutput  Json
+  changelog      String?
+  status         ToolVersionStatus       @default(DRAFT)
+  createdById    String
+  createdAt      DateTime                @default(now())
+  tool           Tool                    @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  createdBy      User                    @relation("PublishedBy", fields: [createdById], references: [id])
+  installs       InstallRecord[]
+  executions     ToolExecution[]
+  permissions    ToolNetworkPermission[]
+
+  @@unique([toolId, version])
+  @@index([createdById])
+}
+
+model InstallRecord {
+  id             String        @id @default(uuid())
+  workspaceId    String
+  toolVersionId  String
+  installedById  String
+  method         InstallMethod
+  githubPrUrl    String?
+  repositoryName String?
+  installedAt    DateTime      @default(now())
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  toolVersion    ToolVersion   @relation(fields: [toolVersionId], references: [id])
+  installedBy    User          @relation("InstalledBy", fields: [installedById], references: [id])
+
+  @@unique([workspaceId, toolVersionId])
+  @@index([installedById])
+  @@index([toolVersionId])
+}
+
+model Category {
+  id    String         @id @default(uuid())
+  name  String         @unique
+  slug  String         @unique
+  tools ToolCategory[]
+}
+
+model ToolCategory {
+  toolId     String
+  categoryId String
+  tool       Tool     @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([toolId, categoryId])
+  @@index([categoryId])
+}
+
+model Tag {
+  id    String    @id @default(uuid())
+  name  String    @unique
+  slug  String    @unique
+  tools ToolTag[]
+}
+
+model ToolTag {
+  toolId String
+  tagId  String
+  tool   Tool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([toolId, tagId])
+  @@index([tagId])
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  toolId    String
+  userId    String
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+  tool      Tool     @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([toolId, userId])
+  @@index([userId])
+}
+
+model Invite {
+  id          String       @id @default(uuid())
+  workspaceId String
+  senderId    String
+  receiverId  String?
+  email       String
+  role        WorkspaceRole
+  status      InviteStatus @default(PENDING)
+  createdAt   DateTime     @default(now())
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sender      User         @relation("InviteSender", fields: [senderId], references: [id])
+  receiver    User?        @relation("InviteReceiver", fields: [receiverId], references: [id])
+
+  @@unique([workspaceId, email, status])
+  @@index([senderId])
+  @@index([receiverId])
+}
+
+model Notification {
+  id        String            @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  relatedId String?
+  read      Boolean           @default(false)
+  readAt    DateTime?
+  createdAt DateTime          @default(now())
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ToolExecution {
+  id                String            @id @default(uuid())
+  toolVersionId     String
+  triggeredById     String?
+  workspaceId       String?
+  type              ExecutionType
+  status            ExecutionStatus   @default(PENDING)
+  input             Json
+  output            Json?
+  error             String?
+  durationMs        Int?
+  sandboxSessionId  String?
+  startedAt         DateTime          @default(now())
+  finishedAt        DateTime?
+  toolVersion       ToolVersion       @relation(fields: [toolVersionId], references: [id], onDelete: Cascade)
+  triggeredBy       User?             @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+  workspace         Workspace?        @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  sandboxSession    SandboxSession?   @relation(fields: [sandboxSessionId], references: [id], onDelete: SetNull)
+
+  @@index([toolVersionId])
+  @@index([triggeredById])
+  @@index([workspaceId])
+  @@index([sandboxSessionId])
+}
+
+model ExecutionQuota {
+  id          String    @id @default(uuid())
+  userId      String
+  workspaceId String
+  day         DateTime
+  executions  Int       @default(0)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId, day])
+  @@index([userId])
+}
+
+model ToolNetworkPermission {
+  id            String      @id @default(uuid())
+  toolVersionId String
+  host          String
+  description   String?
+  toolVersion   ToolVersion @relation(fields: [toolVersionId], references: [id], onDelete: Cascade)
+
+  @@index([toolVersionId])
+}
+
+model SandboxSession {
+  id                 String          @id @default(uuid())
+  provider           SandboxProvider
+  externalSandboxId  String
+  createdAt          DateTime        @default(now())
+  destroyedAt        DateTime?
+  executions         ToolExecution[]
+}
+
+model ToolAnalytics {
+  toolId          String @id
+  totalExecutions Int    @default(0)
+  totalInstalls   Int    @default(0)
+  totalDurationMs BigInt @default(0)
+  failureCount    Int    @default(0)
+  successCount    Int    @default(0)
+  tool            Tool   @relation(fields: [toolId], references: [id], onDelete: Cascade)
+}
