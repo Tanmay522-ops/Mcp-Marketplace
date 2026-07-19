@@ -5,16 +5,6 @@ import { useEffect } from "react";
 
 export default function Hero() {
 
-    const { isSignedIn, isLoaded } = useAuth();
-    const router = useRouter();
-
-    useEffect(() => {
-        if (isLoaded && isSignedIn) {
-            router.push("/callback");
-        }
-    }, [isLoaded, isSignedIn, router]);
-
-    if (!isLoaded || isSignedIn) return null;
 
   return (
         <section className="w-full py-24 md:py-32">
