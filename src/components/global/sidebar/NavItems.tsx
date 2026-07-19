@@ -24,7 +24,7 @@ const NavItem = ({ item, onOpenSearch, onNavigate, level = 0 }: Props) => {
         <div className="flex items-center justify-between w-full min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
                 <item.icon
-                    className={`w-[16px] h-[16px] shrink-0 transition-colors ${isActive ? 'text-foreground' : 'text-muted-foreground/70 group-hover:text-foreground/70'
+                    className={`w-[23px] h-[23px] shrink-0 transition-colors ${isActive ? 'text-foreground' : 'text-muted-foreground/70 group-hover:text-foreground/70'
                         }`}
                     strokeWidth={1.5}
                 />
@@ -53,7 +53,7 @@ const NavItem = ({ item, onOpenSearch, onNavigate, level = 0 }: Props) => {
         </div>
     )
 
-    const rowClassName = `group flex items-center px-2.5 py-[7px] rounded-[6px] transition-all duration-200 select-none cursor-pointer
+    const rowClassName = `group flex items-center px-2.5 py-[9px] rounded-[6px] transition-all duration-200 select-none cursor-pointer
     ${isActive
             ? 'bg-black/5 dark:bg-white/10 text-foreground font-medium'
             : 'text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 hover:text-foreground/90'

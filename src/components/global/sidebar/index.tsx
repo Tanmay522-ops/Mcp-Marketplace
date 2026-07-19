@@ -28,7 +28,7 @@ const Sidebar = ({ activeWorkspaceId, workspaces, onOpenSearch, onNavigate }: Pr
                 {navGroups.map((group, idx) => (
                     <div key={idx} className="flex flex-col gap-0.5">
                         {group.heading && (
-                            <span className="px-2.5 mb-1 text-[11px] font-semibold tracking-wider text-muted-foreground/50 uppercase">
+                            <span className="px-2.5 mb-1 text-[12px] font-semibold tracking-wider text-muted-foreground/50 uppercase">
                                 {group.heading}
                             </span>
                         )}
@@ -46,10 +46,10 @@ const Sidebar = ({ activeWorkspaceId, workspaces, onOpenSearch, onNavigate }: Pr
                 <SignOutButton>
                     <button className="group flex items-center gap-2.5 px-2.5 py-[7px] rounded-[6px] text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 hover:text-foreground/90 transition-colors w-full text-left">
                         <LogOut
-                            className="w-[16px] h-[16px] text-muted-foreground/70 group-hover:text-foreground/70"
+                            className="w-[18px] h-[18px] text-muted-foreground/70 group-hover:text-foreground/70"
                             strokeWidth={1.5}
                         />
-                        <span className="text-[13px] tracking-wide">Log out</span>
+                        <span className="text-[14px] tracking-wide">Log out</span>
                     </button>
                 </SignOutButton>
             </div>
