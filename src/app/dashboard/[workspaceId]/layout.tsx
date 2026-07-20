@@ -1,5 +1,5 @@
 import { onAuthenticateUser } from '@/actions/user'
-import { verifyAccessToWorkspace } from '@/actions/workspace'
+import { getWorkspaceMembers, verifyAccessToWorkspace } from '@/actions/workspace'
 import { redirect } from 'next/navigation'
 import { dehydrate, HydrationBoundary, QueryClient } from '@tanstack/react-query'
 
@@ -35,6 +35,7 @@ const Layout = async ({ params, children }: Props) => {
             name: ws.name,
             slug: ws.slug,
             image: ws.image,
+            isOwner: true,
         })) ?? []
 
     const memberWorkspaces: WorkspaceSummary[] =
@@ -46,11 +47,17 @@ const Layout = async ({ params, children }: Props) => {
                 name: ws.name,
                 slug: ws.slug,
                 image: ws.image,
+                isOwner: false,
             })) ?? []
 
     const workspaces = [...ownedWorkspaces, ...memberWorkspaces]
 
     const query = new QueryClient()
+
+    // await query.prefetchQuery({
+    //     queryKey: ['workspace-members', workspaceId],
+    //     queryFn: () => getWorkspaceMembers(workspaceId),
+    // })
 
     return (
         <HydrationBoundary state={dehydrate(query)}>

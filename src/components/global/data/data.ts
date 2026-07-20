@@ -33,6 +33,7 @@ export type WorkspaceSummary = {
     name: string
     slug: string
     image: string | null
+    isOwner: boolean
 }
 
 export const getNavGroups = (workspaceId: string): NavGroupData[] => [
