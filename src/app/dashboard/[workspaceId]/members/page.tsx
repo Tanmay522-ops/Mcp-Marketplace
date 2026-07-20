@@ -1,4 +1,5 @@
 import { getWorkspaceMembers } from '@/actions/workspace'
+import InviteButton from '@/components/global/invite/invite-button'
 import MembersTable from '@/components/global/Members/MembersTable'
 
 
@@ -21,7 +22,8 @@ const MembersPage = async ({ params }: Props) => {
         )
     }
 
-    const { callerId, members } = result.data
+    const { callerId, members, callerRole } = result.data
+    const canInvite = callerRole === 'OWNER' || callerRole === 'ADMIN'
 
     return (
         <div className="p-6 md:p-8">
@@ -32,6 +34,7 @@ const MembersPage = async ({ params }: Props) => {
                         {members.length} {members.length === 1 ? 'person' : 'people'} in this workspace
                     </p>
                 </div>
+                {canInvite && <InviteButton workspaceId={workspaceId} />}
             </div>
 
             <MembersTable workspaceId={workspaceId} callerId={callerId} />

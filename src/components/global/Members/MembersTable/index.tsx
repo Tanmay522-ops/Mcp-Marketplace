@@ -38,10 +38,7 @@ const MembersTable = ({ workspaceId, callerId }: Props) => {
         queryFn: () => getWorkspaceMembers(workspaceId),
     })
 
-    // Still fetching and nothing to show yet — distinct from "we tried and
-    // it failed" below. Normally this is instant thanks to the layout's
-    // prefetch, but shows briefly on a cold client-side navigation or
-    // cache miss.
+
     if (isLoading && !result) {
         return (
             <div className="w-full bg-card rounded-xl border border-border/50 shadow-sm p-8 flex flex-col items-center justify-center gap-2 text-muted-foreground">
@@ -51,8 +48,6 @@ const MembersTable = ({ workspaceId, callerId }: Props) => {
         )
     }
 
-    // A real result came back, but it wasn't a success — access denied,
-    // workspace not found, or a server error.
     if (!result || result.status !== 200 || !result.data) {
         return (
             <div className="w-full bg-card rounded-xl border border-border/50 shadow-sm p-8 text-center">
@@ -73,7 +68,7 @@ const MembersTable = ({ workspaceId, callerId }: Props) => {
     }
 
     return (
-        <div className="w-full bg-card rounded-xl border border-border/50 shadow-sm overflow-hidden">
+        <div className="w-full bg-card rounded-xl border border-border/50 shadow-sm ">
             <div className="divide-y divide-border/50">
                 {members.map((member) => {
                     const isSelf = member.userId === callerId
@@ -84,7 +79,7 @@ const MembersTable = ({ workspaceId, callerId }: Props) => {
                             <div className="flex items-center gap-3 min-w-0">
                                 <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-semibold text-[12px] shadow-sm overflow-hidden shrink-0">
                                     {member.user.imageUrl ? (
-                                        // eslint-disable-next-line @next/next/no-img-element
+                                   
                                         <img
                                             src={member.user.imageUrl}
                                             alt={displayName(member)}
