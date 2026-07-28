@@ -15,7 +15,14 @@ type Props = {
 
 const NavItem = ({ item, onOpenSearch, onNavigate, level = 0 }: Props) => {
     const pathname = usePathname()
-    const hasChildren = !!item.children?.length
+
+    // `hidden` items (e.g. Browse) still exist in the nav data so Header's
+    // activeTitle lookup can resolve their title — they just shouldn't be
+    // drawn as a clickable row here. Filtering before the `.length` check
+    // matters too: a parent whose only children are all hidden should not
+    // render an empty expandable chevron with nothing under it.
+    const visibleChildren = item.children?.filter((child) => !child.hidden) ?? []
+    const hasChildren = visibleChildren.length > 0
     const [isOpen, setIsOpen] = useState(false)
 
     const isActive = !!item.href && pathname === item.href
@@ -88,7 +95,7 @@ const NavItem = ({ item, onOpenSearch, onNavigate, level = 0 }: Props) => {
                         }`}
                 >
                     <div className="overflow-hidden min-h-0 flex flex-col gap-0.5 mt-0.5">
-                        {item.children!.map((child) => (
+                        {visibleChildren.map((child) => (
                             <NavItem
                                 key={child.id}
                                 item={child}

@@ -10,6 +10,7 @@ import {
     Bell,
     Search,
     Hash,
+    Compass,
 } from 'lucide-react'
 
 export type NavItemData = {
@@ -21,6 +22,8 @@ export type NavItemData = {
     badge?: number | string
     shortcut?: string
     children?: NavItemData[]
+    hidden?: boolean
+
 }
 
 export type NavGroupData = {
@@ -57,6 +60,14 @@ export const getNavGroups = (workspaceId: string): NavGroupData[] => [
                 title: 'Notifications',
                 icon: Bell,
                 href: `/dashboard/${workspaceId}/notifications`,
+                children:[
+                    {
+                        id: 'invites',
+                        title: 'Invites',
+                        icon: Mail,
+                        href: `/dashboard/${workspaceId}/invites`,
+                    },
+                ]
             },
         ],
     },
@@ -65,35 +76,21 @@ export const getNavGroups = (workspaceId: string): NavGroupData[] => [
         items: [
             {
                 id: 'tools',
-                title: 'My Tools',
+                title: 'MCP Server',
                 icon: Package,
-                href: `/dashboard/${workspaceId}/tools`,
-                children: [
+                href: `/dashboard/${workspaceId}/mcp`,
+                children:[
+                   
                     {
-                        id: 'tools-published',
-                        title: 'Published',
-                        icon: Hash,
-                        href: `/dashboard/${workspaceId}/tools?status=PUBLISHED`,
+                        
+                        id: 'browse',
+                        title: 'Browse',
+                        icon: Compass,
+                        href: `/dashboard/${workspaceId}/browse`,
+                        hidden: true,
                     },
-                    {
-                        id: 'tools-drafts',
-                        title: 'Drafts',
-                        icon: Hash,
-                        href: `/dashboard/${workspaceId}/tools?status=DRAFT`,
-                    },
-                    {
-                        id: 'tools-archived',
-                        title: 'Archived',
-                        icon: Hash,
-                        href: `/dashboard/${workspaceId}/tools?status=ARCHIVED`,
-                    },
-                ],
-            },
-            {
-                id: 'installs',
-                title: 'Installs',
-                icon: DownloadCloud,
-                href: `/dashboard/${workspaceId}/installs`,
+                ]
+              
             },
             {
                 id: 'executions',
@@ -115,12 +112,7 @@ export const getNavGroups = (workspaceId: string): NavGroupData[] => [
                     },
                 ],
             },
-            {
-                id: 'invites',
-                title: 'Invites',
-                icon: Mail,
-                href: `/dashboard/${workspaceId}/invites`,
-            },
+         
         ],
     },
     {
