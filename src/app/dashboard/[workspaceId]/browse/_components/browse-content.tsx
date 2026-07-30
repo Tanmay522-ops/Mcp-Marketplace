@@ -1,8 +1,9 @@
 "use client"
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Search, Plus, Package, Loader2 } from 'lucide-react'
+import { Search, Plus, Package, Loader2, Link2Off } from 'lucide-react'
 import { searchMarketplaceTools, installTool, MarketplaceTool } from '@/actions/install'
 import DeployPanel from './deploy-panel'
 
@@ -12,6 +13,7 @@ type Props = {
 }
 
 const BrowseContent = ({ workspaceId, initialTools }: Props) => {
+    const router = useRouter()
     const queryClient = useQueryClient()
     const [query, setQuery] = useState('')
     const [installingId, setInstallingId] = useState<string | null>(null)
@@ -27,65 +29,93 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
     const featured = tools.filter((tool) => tool.featured)
     const rest = tools.filter((tool) => !tool.featured)
 
+    // Add just creates the install record and takes the user to the tool's
+    // own page — it does NOT jump straight into the OAuth redirect chain.
+    // The tool detail page owns the actual Authorize button. This matches
+    // the flow: Add -> land on tool page -> user decides to click Authorize
+    // from there, not automatically the instant they click Add.
     const handleInstall = async (toolVersionId: string, toolId: string) => {
         setInstallingId(toolVersionId)
         const res = await installTool({ workspaceId, toolVersionId })
         setInstallingId(null)
-        if (res.status === 201) {
-            queryClient.invalidateQueries({ queryKey: ['marketplace-tools', workspaceId] })
-            queryClient.invalidateQueries({ queryKey: ['workspace-installs', workspaceId] })
-            if (res.requiresAuth) {
-                window.location.href = `/api/oauth/${toolId}/authorize?workspaceId=${workspaceId}`
-            }
+
+        if (res.status !== 201 || !res.data) {
+            // TODO: surface res.message to the user (toast, inline error, etc.)
+            console.error('installTool failed:', res.message)
+            return
         }
+
+        queryClient.invalidateQueries({ queryKey: ['marketplace-tools', workspaceId] })
+        queryClient.invalidateQueries({ queryKey: ['workspace-installs', workspaceId] })
+        router.push(`/dashboard/${workspaceId}/mcp/${toolId}`)
+    }
+
+    const goToToolPage = (toolId: string) => {
+        router.push(`/dashboard/${workspaceId}/mcp/${toolId}`)
     }
 
     const renderAddButton = (tool: MarketplaceTool) => {
         const version = tool.versions[0]
         const install = version?.installs[0]
-        const alreadyInstalled = !!install
 
         if (!version) return null
 
-        if (alreadyInstalled && tool.requiresAuth && install.status === 'PENDING') {
+        if (!install) {
             return (
-                <a
-                    href={`/api/oauth/${tool.id}/authorize?workspaceId=${workspaceId}`}
-                    className="h-7 px-3 rounded-md bg-amber-500/10 text-amber-500 text-[12px] font-medium hover:bg-amber-500/20 transition-colors flex items-center gap-1"
+                <button
+                    onClick={() => handleInstall(version.id, tool.id)}
+                    disabled={installingId === version.id}
+                    className="h-7 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1"
                 >
-                    Authorize
-                </a>
+                    {installingId === version.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                    Add
+                </button>
             )
         }
 
-        if (alreadyInstalled && install.status === 'FAILED') {
+        // Every non-active status just navigates to the tool's own page —
+        // that's where the real Authorize button and its "Connecting..."
+        // state live, not here on the browse grid.
+        if (install.status === 'NOT_CONNECTED') {
             return (
-                <a
-                    href={`/api/oauth/${tool.id}/authorize?workspaceId=${workspaceId}`}
+                <button
+                    onClick={() => goToToolPage(tool.id)}
+                    className="h-7 px-3 rounded-md border border-border/50 text-muted-foreground/70 text-[12px] font-medium hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-1.5"
+                >
+                    <Link2Off className="w-3 h-3" strokeWidth={1.5} />
+                    Connect
+                </button>
+            )
+        }
+
+        if (install.status === 'PENDING') {
+            return (
+                <button
+                    onClick={() => goToToolPage(tool.id)}
+                    className="h-7 px-3 rounded-md bg-amber-500/10 text-amber-500 text-[12px] font-medium hover:bg-amber-500/20 transition-colors flex items-center gap-1"
+                >
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    Pending
+                </button>
+            )
+        }
+
+        if (install.status === 'FAILED') {
+            return (
+                <button
+                    onClick={() => goToToolPage(tool.id)}
                     className="h-7 px-3 rounded-md bg-red-500/10 text-red-500 text-[12px] font-medium hover:bg-red-500/20 transition-colors flex items-center gap-1"
                 >
                     Retry
-                </a>
+                </button>
             )
         }
 
-        if (alreadyInstalled) {
-            return (
-                <span className="h-7 px-3 rounded-md bg-emerald-500/10 text-emerald-500 text-[12px] font-medium flex items-center gap-1">
-                    ✓ Added
-                </span>
-            )
-        }
-
+        // ACTIVE
         return (
-            <button
-                onClick={() => handleInstall(version.id, tool.id)}
-                disabled={installingId === version.id}
-                className="h-7 px-3 rounded-md bg-primary text-primary-foreground text-[12px] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1"
-            >
-                {installingId === version.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                Add
-            </button>
+            <span className="h-7 px-3 rounded-md bg-emerald-500/10 text-emerald-500 text-[12px] font-medium flex items-center gap-1">
+                ✓ Added
+            </span>
         )
     }
 

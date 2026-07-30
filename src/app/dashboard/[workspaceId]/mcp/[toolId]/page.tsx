@@ -90,7 +90,7 @@ const ToolDetailPage = async ({ params }: Props) => {
         </div>
       </div>
 
-   
+
     </div>
   )
 }

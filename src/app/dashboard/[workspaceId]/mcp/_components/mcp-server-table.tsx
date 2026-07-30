@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
-import { Search, ArrowUpDown, Package } from 'lucide-react'
+import { Search, ArrowUpDown, Package, Link2Off } from 'lucide-react'
 import { getWorkspaceInstalls, InstallWithTool } from '@/actions/install'
 
 type Props = {
@@ -12,6 +12,7 @@ type Props = {
 }
 
 const statusDisplay: Record<string, { label: string; className: string }> = {
+    NOT_CONNECTED: { label: 'Not connected', className: 'text-muted-foreground/60' },
     PENDING: { label: 'Pending', className: 'text-amber-500' },
     ACTIVE: { label: 'Running', className: 'text-emerald-500' },
     FAILED: { label: 'Error', className: 'text-red-500' },
@@ -82,7 +83,8 @@ const McpServersTable = ({ workspaceId, initialInstalls }: Props) => {
 
                         <div className="divide-y divide-border/50">
                             {installs.map((install) => {
-                                const display = statusDisplay[install.status] ?? statusDisplay.PENDING
+                                const display = statusDisplay[install.status] ?? statusDisplay.NOT_CONNECTED
+                                const isNotConnected = install.status === 'NOT_CONNECTED'
                                 return (
                                     <Link
                                         key={install.id}
@@ -108,7 +110,11 @@ const McpServersTable = ({ workspaceId, initialInstalls }: Props) => {
                                         </div>
 
                                         <span className={`text-[13px] font-medium flex items-center gap-1.5 ${display.className}`}>
-                                            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                                            {isNotConnected ? (
+                                                <Link2Off className="w-3 h-3" strokeWidth={1.5} />
+                                            ) : (
+                                                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                                            )}
                                             {display.label}
                                         </span>
 

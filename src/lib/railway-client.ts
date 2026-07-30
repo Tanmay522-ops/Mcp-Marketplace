@@ -92,6 +92,18 @@ export const RAILWAY_PROJECT_CREATE = `
   }
 `
 
+// Deletes a Railway project outright — used to clean up after a FAILED
+// deploy instead of leaving an orphaned, half-configured project sitting
+// around. This is the direct fix for the "rapid project creation" pattern
+// that likely triggered the free-plan provisioning error: every failed
+// deploy used to leave its project behind permanently, so retries piled up
+// real, counted projects instead of leaving no trace.
+export const RAILWAY_PROJECT_DELETE = `
+  mutation ProjectDelete($id: String!) {
+    projectDelete(id: $id)
+  }
+`
+
 export const RAILWAY_SERVICE_CREATE = `
   mutation ServiceCreate($input: ServiceCreateInput!) {
     serviceCreate(input: $input) {
@@ -144,6 +156,21 @@ export const RAILWAY_VARIABLE_UPSERT = `
 export const RAILWAY_SERVICE_INSTANCE_UPDATE = `
   mutation ServiceInstanceUpdate($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
     serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
+  }
+`
+
+// Caps CPU/memory for a single service instance. Without this, a service
+// scales up to your PLAN's full ceiling by default — meaning one heavy
+// deployed tool can consume the entire account's resource pool and starve
+// every other tool, regardless of how big your plan is. Confirmed via
+// Railway's own help forum. UNLIKE RAILWAY_SERVICE_INSTANCE_UPDATE above,
+// this mutation takes a SINGLE `input` argument with serviceId,
+// environmentId, vCPUs, and memoryGB all nested together inside it — do
+// not split serviceId/environmentId out as separate top-level args here,
+// that's the other mutation's shape, not this one's.
+export const RAILWAY_SERVICE_INSTANCE_LIMITS_UPDATE = `
+  mutation ServiceInstanceLimitsUpdate($input: ServiceInstanceLimitsUpdateInput!) {
+    serviceInstanceLimitsUpdate(input: $input)
   }
 `
 

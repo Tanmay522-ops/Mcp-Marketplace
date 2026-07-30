@@ -12,6 +12,7 @@ import {
     detectStartCommand,
     detectDefaultBranch,
     resolvePackageRepo,
+    checkDeployability,
     DetectedVariable,
 } from '@/actions/deploy'
 import { deploymentStatusDisplay } from '@/lib/deployment-status'
@@ -49,6 +50,10 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
     const [startCommand, setStartCommand] = useState('')
     const [startCommandSource, setStartCommandSource] = useState<string | null>(null)
     const [pollTimedOut, setPollTimedOut] = useState(false)
+    // Non-blocking — the deployability check is a heuristic (a fixed list of
+    // marker files), not exhaustive of every language Railpack supports. A
+    // false negative shouldn't stop a real deploy, so this only warns.
+    const [deployabilityWarning, setDeployabilityWarning] = useState(false)
 
     const timedOutRef = useRef(false)
 
@@ -79,6 +84,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
     })
 
     const deployment = result?.status === 200 ? result.data : null
+    const unrecognizedRailwayStatus = result?.status === 200 ? result.unrecognizedRailwayStatus : null
 
     if (!open || !mounted) return null
 
@@ -109,6 +115,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
         setStartCommand('')
         setStartCommandSource(null)
         setPollTimedOut(false)
+        setDeployabilityWarning(false)
         timedOutRef.current = false
     }
 
@@ -122,9 +129,10 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
 
     const runGithubDetection = async (repoUrl: string) => {
         const resolvedBranch = await detectDefaultBranch(repoUrl)
-        const [detectedVars, detectedStart] = await Promise.all([
+        const [detectedVars, detectedStart, deployability] = await Promise.all([
             detectToolVariables(repoUrl, resolvedBranch, rootDirectory),
             detectStartCommand(repoUrl, resolvedBranch, rootDirectory),
+            checkDeployability(repoUrl, resolvedBranch, rootDirectory),
         ])
         setBranch(resolvedBranch)
         setBranchSource('detected from repository')
@@ -138,6 +146,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
         )
         setStartCommand(detectedStart?.command ?? '')
         setStartCommandSource(detectedStart?.source ?? null)
+        setDeployabilityWarning(!deployability.looksDeployable)
     }
 
     const handleContinueToConfigure = async () => {
@@ -150,6 +159,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
             setStartCommand('')
             setStartCommandSource(null)
             setVariables([])
+            setDeployabilityWarning(false)
             setStep('configure')
             return
         }
@@ -195,9 +205,10 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
     const handleRootDirectoryBlur = async () => {
         if (source === 'docker' || !effectiveRepoUrl || !branch) return
         setIsDetecting(true)
-        const [detectedVars, detectedStart] = await Promise.all([
+        const [detectedVars, detectedStart, deployability] = await Promise.all([
             detectToolVariables(effectiveRepoUrl, branch, rootDirectory),
             detectStartCommand(effectiveRepoUrl, branch, rootDirectory),
+            checkDeployability(effectiveRepoUrl, branch, rootDirectory),
         ])
         setVariables(
             detectedVars.map((d: DetectedVariable) => ({
@@ -209,6 +220,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
         )
         setStartCommand(detectedStart?.command ?? '')
         setStartCommandSource(detectedStart?.source ?? null)
+        setDeployabilityWarning(!deployability.looksDeployable)
         setIsDetecting(false)
     }
 
@@ -457,6 +469,18 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
 
                     {step === 'configure' && (
                         <>
+                            {deployabilityWarning && (
+                                <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 mb-4">
+                                    <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" strokeWidth={1.5} />
+                                    <span className="text-amber-500 text-[12px] leading-relaxed">
+                                        We couldn't find anything buildable here (no Dockerfile, package.json,
+                                        requirements.txt, etc.). This might be a docs-only repo for a server
+                                        that's already hosted elsewhere — check the README before deploying. You
+                                        can still continue if you're confident this is right.
+                                    </span>
+                                </div>
+                            )}
+
                             {source !== 'docker' && (
                                 <>
                                     {(source === 'npm' || source === 'pypi') && resolvedRepoUrl && (
@@ -609,6 +633,12 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
                                 <p className="text-[12px] text-muted-foreground mt-4 text-center max-w-sm">
                                     Deployed. Connect an MCP client via the "Connect" button on this tool's page —
                                     it'll walk you through logging in, no key to copy.
+                                </p>
+                            )}
+                            {!isResolved && unrecognizedRailwayStatus && (
+                                <p className="text-[11.5px] text-muted-foreground mt-2 text-center">
+                                    Railway reports: <span className="font-mono">{unrecognizedRailwayStatus}</span> — this
+                                    may still be progressing normally even though the label above hasn't updated.
                                 </p>
                             )}
                             {!isResolved && pollTimedOut && (

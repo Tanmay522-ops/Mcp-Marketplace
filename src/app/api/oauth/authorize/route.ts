@@ -1,8 +1,9 @@
 // app/api/oauth/authorize/route.ts
 //
 // Entry point for the "Authorize to connect" button. Redirects the user to
-// the TOOL's third-party OAuth provider (Asana, Notion, whatever the
-// deployer configured) — not an OAuth server we run ourselves.
+// the TOOL's third-party OAuth provider (Notion, Linear, Asana, whatever the
+// deployer configured) — classic OAuth only. Not an OAuth server we run
+// ourselves.
 //
 // GET /api/oauth/authorize?workspaceId=...&toolId=...
 
@@ -35,6 +36,19 @@ export async function GET(req: NextRequest) {
     authorizeUrl.searchParams.set("redirect_uri", callbackUrl)
     authorizeUrl.searchParams.set("state", state)
     if (tool.oauthScopes) authorizeUrl.searchParams.set("scope", tool.oauthScopes)
+
+    // Generic escape hatch for providers that need non-standard params on
+    // the authorize request (e.g. Notion requires `owner=user`, which isn't
+    // part of the OAuth spec — it's Notion-specific). Stored per-tool as
+    // plain JSON so any future provider can set whatever it needs without
+    // a code change here. Example value stored on the Notion Tool row:
+    //   { "owner": "user" }
+    const extraParams = tool.oauthExtraAuthorizeParams as Record<string, string> | null
+    if (extraParams) {
+        for (const [key, value] of Object.entries(extraParams)) {
+            authorizeUrl.searchParams.set(key, value)
+        }
+    }
 
     return NextResponse.redirect(authorizeUrl.toString())
 }

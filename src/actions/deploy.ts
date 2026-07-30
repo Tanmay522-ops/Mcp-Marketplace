@@ -7,11 +7,13 @@ import {
     assertRailwayConfigured,
     RAILWAY_ME_QUERY,
     RAILWAY_PROJECT_CREATE,
+    RAILWAY_PROJECT_DELETE,
     RAILWAY_SERVICE_CREATE,
     RAILWAY_SERVICE_DOMAIN_CREATE,
     RAILWAY_DEPLOYMENT_STATUS_QUERY,
     RAILWAY_VARIABLE_UPSERT,
     RAILWAY_SERVICE_INSTANCE_UPDATE,
+    RAILWAY_SERVICE_INSTANCE_LIMITS_UPDATE,
     RAILWAY_SERVICE_DEPLOY,
 } from "@/lib/railway-client"
 
@@ -184,7 +186,68 @@ export const detectStartCommand = async (
     return null
 }
 
+export type DeployabilityCheck = {
+    looksDeployable: boolean
+    // Which marker file was found, if any — shown to the user as reassurance
+    // when present, or omitted when nothing was found.
+    foundMarker: string | null
+}
+
+// Checks for ANY file that would tell Railpack (or a Dockerfile build) there's
+// something to actually build here. This is NOT exhaustive of every possible
+// language/framework Railpack supports — it's deliberately a "does this look
+// like source code at all" sanity check, not a strict allowlist. A repo that
+// only contains docs/license/README (e.g. one that just points at an
+// already-hosted remote server, like Taplio's) has none of these, and a
+// deploy attempt against it fails on Railway's side ~30+ seconds later with
+// no clearer explanation than "railpack process exited with an error." This
+// catches that case up front, before the user commits to a deploy attempt.
+const DEPLOYABILITY_MARKERS = [
+    "Dockerfile",
+    "package.json",
+    "requirements.txt",
+    "pyproject.toml",
+    "go.mod",
+    "Gemfile",
+    "Cargo.toml",
+    "composer.json",
+]
+
+export const checkDeployability = async (
+    repositoryUrl: string,
+    branch: string,
+    rootDirectory?: string
+): Promise<DeployabilityCheck> => {
+    const parsed = parseGitHubUrl(repositoryUrl)
+    if (!parsed) return { looksDeployable: true, foundMarker: null } // can't check — don't block on an unrelated failure
+
+    const { owner, repo } = parsed
+    const base = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`
+
+    for (const marker of DEPLOYABILITY_MARKERS) {
+        try {
+            const res = await fetch(`${base}/${joinRepoPath(rootDirectory, marker)}`)
+            if (res.ok) return { looksDeployable: true, foundMarker: marker }
+        } catch {
+            // A network hiccup here shouldn't block the whole flow — treat
+            // as inconclusive and keep checking the rest of the list.
+        }
+    }
+
+    return { looksDeployable: false, foundMarker: null }
+}
+
 export type DetectedVariable = { key: string; required: boolean; hint?: string }
+
+// Variables Railway (or the deploy platform generally) injects
+// automatically at runtime — never surface these as something the user
+// needs to fill in. PORT specifically was silently causing a real bug:
+// detectToolVariables would find it in .env.example, mark it "required",
+// and the Deploy button would then block submission on an empty value the
+// user was never supposed to provide themselves — or worse, if they typed
+// something in, it could conflict with the port Railway's networking
+// layer actually expects the container to listen on.
+const PLATFORM_MANAGED_VARS = new Set(["PORT"])
 
 export const detectToolVariables = async (
     repositoryUrl: string,
@@ -205,7 +268,9 @@ export const detectToolVariables = async (
                 const text = await res.text()
                 for (const line of text.split("\n")) {
                     const match = line.match(/^([A-Z_][A-Z0-9_]*)\s*=/)
-                    if (match) found.set(match[1], { key: match[1], required: true, hint: filename })
+                    if (match && !PLATFORM_MANAGED_VARS.has(match[1])) {
+                        found.set(match[1], { key: match[1], required: true, hint: filename })
+                    }
                 }
             }
         } catch { /* ignore, try next file */ }
@@ -218,7 +283,7 @@ export const detectToolVariables = async (
             const text = await res.text()
             for (const line of text.split("\n")) {
                 const match = line.match(/^ENV\s+([A-Z_][A-Z0-9_]*)/)
-                if (match && !found.has(match[1])) {
+                if (match && !found.has(match[1]) && !PLATFORM_MANAGED_VARS.has(match[1])) {
                     found.set(match[1], { key: match[1], required: false, hint: "Dockerfile" })
                 }
             }
@@ -252,6 +317,30 @@ export const deployCustomTool = async ({
 
         if (ctx.callerRole !== "OWNER" && ctx.callerRole !== "ADMIN") {
             return { status: 403 as const, message: "You don't have permission to deploy tools in this workspace" }
+        }
+
+        // Cooldown: reject if this workspace deployed anything in the last
+        // DEPLOY_COOLDOWN_SECONDS. This is the direct fix for rapid-fire
+        // bursts of Railway project creation — whatever caused a given
+        // burst (repeated test retries, a debugging loop, or genuinely
+        // fast real usage), this stops it at the source instead of hoping
+        // it doesn't happen. Tune the window via env if it's too strict —
+        // start conservative, loosen once you've confirmed real usage
+        // patterns don't need faster back-to-back deploys.
+        const cooldownSeconds = Number(process.env.DEPLOY_COOLDOWN_SECONDS ?? "15")
+        const recentDeployment = await client.deployment.findFirst({
+            where: { tool: { workspaceId } },
+            orderBy: { createdAt: "desc" },
+            select: { createdAt: true },
+        })
+        if (recentDeployment) {
+            const secondsSinceLast = (Date.now() - recentDeployment.createdAt.getTime()) / 1000
+            if (secondsSinceLast < cooldownSeconds) {
+                return {
+                    status: 429 as const,
+                    message: `Please wait ${Math.ceil(cooldownSeconds - secondsSinceLast)} more second(s) before deploying again.`,
+                }
+            }
         }
 
         const trimmedName = name.trim()
@@ -310,6 +399,11 @@ export const deployCustomTool = async ({
 
         const deployment = tool.deployments[0]
 
+        // Tracks the Railway project once created, so the catch block below
+        // can delete it on failure instead of leaving it orphaned — this is
+        // the actual fix for projects piling up from failed/retried deploys.
+        let createdRailwayProjectId: string | null = null
+
         try {
             assertRailwayConfigured()
 
@@ -330,6 +424,7 @@ export const deployCustomTool = async ({
             const { projectCreate } = await railwayRequest<{
                 projectCreate: { id: string; environments: { edges: { node: { id: string; name: string } }[] } }
             }>(RAILWAY_PROJECT_CREATE, { input: { name: `mcp-${slug}`, workspaceId: railwayWorkspaceId } })
+            createdRailwayProjectId = projectCreate.id
 
             const environmentId = projectCreate.environments.edges[0]?.node.id
             if (!environmentId) {
@@ -365,6 +460,33 @@ export const deployCustomTool = async ({
                         },
                 }
             )
+
+            // Cap every deployed service unconditionally, regardless of
+            // startCommand/variables — without this, a service defaults to
+            // scaling up to your PLAN's full ceiling, meaning one heavy
+            // deployed tool can consume the entire account's resource pool
+            // and crash/starve every other tool sharing it (this is the
+            // "Free plan resource provision limit exceeded" failure mode).
+            // Tune via env vars to match your actual plan's real capacity —
+            // defaults here are deliberately small (fits comfortably within
+            // a typical free-tier pool split across a few services).
+            const defaultVCPUs = Number(process.env.RAILWAY_DEFAULT_VCPU_LIMIT ?? "0.5")
+            const defaultMemoryGB = Number(process.env.RAILWAY_DEFAULT_MEMORY_GB_LIMIT ?? "0.5")
+
+            await railwayRequest<{ serviceInstanceLimitsUpdate: boolean }>(RAILWAY_SERVICE_INSTANCE_LIMITS_UPDATE, {
+                input: {
+                    serviceId: serviceCreate.id,
+                    environmentId,
+                    vCPUs: defaultVCPUs,
+                    memoryGB: defaultMemoryGB,
+                },
+            })
+            // NOTE: assuming this applies as a live runtime ceiling (Railway's
+            // own docs describe it as "scale up to the limits you've set"),
+            // not baked-in build config — so it's NOT added to the
+            // redeploy-trigger condition below. If you find resource limits
+            // only actually take effect after a redeploy, add this to that
+            // condition too.
 
             const instanceUpdateInput: Record<string, string> = {}
             if (startCommand && startCommand.trim()) instanceUpdateInput.startCommand = startCommand.trim()
@@ -420,6 +542,26 @@ export const deployCustomTool = async ({
             return { status: 201 as const, data: { toolId: tool.id, deploymentId: deployment.id } }
         } catch (railwayError) {
             console.error("deployCustomTool: Railway API call failed:", railwayError)
+
+            if (createdRailwayProjectId) {
+                try {
+                    await railwayRequest<{ projectDelete: boolean }>(RAILWAY_PROJECT_DELETE, {
+                        id: createdRailwayProjectId,
+                    })
+                } catch (cleanupError) {
+                    // Don't let a failed cleanup attempt mask the original
+                    // error, or crash the whole request — log it and move
+                    // on. Worst case, this one project needs manual
+                    // deletion, which is still far better than every failed
+                    // deploy leaving one behind silently.
+                    console.error(
+                        "deployCustomTool: failed to clean up orphaned Railway project",
+                        createdRailwayProjectId,
+                        cleanupError
+                    )
+                }
+            }
+
             await client.deployment.update({
                 where: { id: deployment.id },
                 data: {
@@ -442,10 +584,10 @@ export const pollDeploymentStatus = async (deploymentId: string) => {
             return { status: 404 as const, message: "Deployment not found" }
         }
         if (!deployment.railwayServiceId || !deployment.railwayProjectId) {
-            return { status: 200 as const, data: deployment }
+            return { status: 200 as const, data: deployment, unrecognizedRailwayStatus: null }
         }
         if (deployment.status === "RUNNING" || deployment.status === "ERROR") {
-            return { status: 200 as const, data: deployment }
+            return { status: 200 as const, data: deployment, unrecognizedRailwayStatus: null }
         }
 
         const result = await railwayRequest<{
@@ -458,21 +600,121 @@ export const pollDeploymentStatus = async (deploymentId: string) => {
 
         const railwayStatus = result.deployments.edges[0]?.node.status
 
+        if (!railwayStatus) {
+            // Railway returned zero deployment records for this
+            // project/environment/service combo. Usually just a brief
+            // window right after triggering (Railway hasn't registered its
+            // own internal deployment yet) that self-resolves on the next
+            // poll — but if this repeats for the SAME deploymentId across
+            // many polls, that's the account-level "stuck" symptom, now at
+            // least visible in logs instead of silent.
+            console.warn(
+                "pollDeploymentStatus: Railway returned no deployment record yet for deploymentId",
+                deploymentId,
+                "— will retry on next poll."
+            )
+        }
+
+        // Verified directly against Railway's GraphQL schema introspection
+        // (DeploymentStatus enum) — not docs prose, not guesswork. This is
+        // now the complete, real list; every one of these 13 values is
+        // confirmed to exist. (ACTIVE and COMPLETED, guessed earlier from
+        // the docs' prose, do NOT actually exist in the real enum — removed.)
         const statusMap: Record<string, "PENDING" | "BUILDING" | "DEPLOYING" | "RUNNING" | "ERROR"> = {
+            // Not yet building — waiting somewhere in the pipeline
             QUEUED: "PENDING",
+            INITIALIZING: "PENDING",
+            WAITING: "PENDING", // waiting for CI (Wait for CI) to pass
+            NEEDS_APPROVAL: "PENDING", // paused pending manual approval — can sit here until a human acts on Railway's side; not something our code can resolve
+
+            // Actively in progress
             BUILDING: "BUILDING",
             DEPLOYING: "DEPLOYING",
+
+            // Genuinely working
             SUCCESS: "RUNNING",
+            SLEEPING: "RUNNING", // scale-to-zero/idle (Serverless) — functioning normally, just idle; wakes on next request, not a failure
+
+            // Not usable, for us, one way or another
             FAILED: "ERROR",
             CRASHED: "ERROR",
+            SKIPPED: "ERROR", // build was skipped — shouldn't normally occur on a fresh first deploy in our flow; if it does, nothing actually built, so no usable server exists
+            REMOVING: "ERROR", // being torn down while we were still polling
+            REMOVED: "ERROR", // gone
+        }
+
+        // Set below whenever Railway reports something outside statusMap —
+        // this is what lets the UI show Railway's literal, real word
+        // instead of freezing on a stale label when a status arrives that
+        // nobody's taught our code about yet.
+        let unrecognizedRailwayStatus: string | null = null
+
+        if (railwayStatus && !(railwayStatus in statusMap)) {
+            // Railway returned a status string we don't recognize. Falling
+            // back to "keep the existing status" below is the SAFE choice
+            // (never crash, never wrongly mark something ERROR/RUNNING) —
+            // but it looks identical to "stuck" from the UI's perspective.
+            // This log is what makes that distinguishable after the fact:
+            // if you see this for a deploy that seemed to hang, the real
+            // cause is an unmapped Railway status, not account throttling —
+            // add that status string to statusMap above once you know
+            // what it should map to.
+            unrecognizedRailwayStatus = railwayStatus
+            console.warn(
+                "pollDeploymentStatus: unrecognized Railway status",
+                railwayStatus,
+                "for deploymentId",
+                deploymentId,
+                "— falling back to existing status",
+                deployment.status
+            )
         }
 
         const mappedStatus = railwayStatus ? statusMap[railwayStatus] ?? deployment.status : deployment.status
 
         const updated = await client.deployment.update({
             where: { id: deploymentId },
-            data: { status: mappedStatus },
+            data: {
+                status: mappedStatus,
+                // Previously only `status` was set here — a build failure
+                // caught via polling (as opposed to a failure during the
+                // initial synchronous setup calls in deployCustomTool) left
+                // errorMessage blank, so the panel showed a bare "Error"
+                // with no explanation at all. This gives the user something
+                // actionable instead of a dead end.
+                ...(mappedStatus === "ERROR" && !deployment.errorMessage
+                    ? {
+                        errorMessage:
+                            "The build failed on Railway. This usually means nothing buildable was found (no Dockerfile, package.json, requirements.txt, etc.) or the build itself errored — check the repository structure, or view the build logs in your Railway dashboard for the exact reason.",
+                    }
+                    : {}),
+            },
         })
+
+        // The OTHER failure path: this deployment's initial Railway API
+        // calls all succeeded (project/service created fine), but the
+        // actual BUILD failed afterward — e.g. Railpack couldn't find
+        // anything to build from. That failure only surfaces here, via
+        // polling, not in deployCustomTool's try/catch (which only covers
+        // failures during the synchronous setup calls). Clean up the
+        // orphaned project here too, or every build failure leaves one
+        // behind exactly like the synchronous-failure case used to.
+        // Guarded by the OLD status check so this only fires once, on the
+        // actual transition into ERROR — same pattern as the RUNNING
+        // handling below.
+        if (mappedStatus === "ERROR" && updated.railwayProjectId) {
+            try {
+                await railwayRequest<{ projectDelete: boolean }>(RAILWAY_PROJECT_DELETE, {
+                    id: updated.railwayProjectId,
+                })
+            } catch (cleanupError) {
+                console.error(
+                    "pollDeploymentStatus: failed to clean up orphaned Railway project after build failure",
+                    updated.railwayProjectId,
+                    cleanupError
+                )
+            }
+        }
 
         if (mappedStatus === "RUNNING" && updated.railwayDomain) {
             const existingVersion = await client.toolVersion.findFirst({
@@ -529,11 +771,11 @@ export const pollDeploymentStatus = async (deploymentId: string) => {
                     })
                 }
 
-                return { status: 200 as const, data: updated }
+                return { status: 200 as const, data: updated, unrecognizedRailwayStatus }
             }
         }
 
-        return { status: 200 as const, data: updated }
+        return { status: 200 as const, data: updated, unrecognizedRailwayStatus }
     } catch (error) {
         console.error("pollDeploymentStatus error:", error)
         return { status: 500 as const, message: "Internal error checking deployment status" }

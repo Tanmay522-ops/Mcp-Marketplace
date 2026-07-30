@@ -117,8 +117,12 @@ export const installTool = async ({ workspaceId, toolVersionId, method = "MANUAL
             return { status: 409 as const, message: "Already installed in this workspace" }
         }
 
+        // FIX: was "PENDING" here — that's reserved for "authorize attempted
+        // but cancelled/failed." A tool that's never even seen the
+        // authorize screen yet is NOT_CONNECTED. The other branches
+        // (non-auth-required installs) are unrelated to this and untouched.
         const initialStatus = toolVersion.tool.requiresAuth
-            ? "PENDING"
+            ? "NOT_CONNECTED"
             : method === "MANUAL"
                 ? "ACTIVE"
                 : "PENDING"
@@ -140,7 +144,11 @@ export const installTool = async ({ workspaceId, toolVersionId, method = "MANUAL
             })
             .catch((err) => console.error("installTool: analytics increment failed:", err))
 
-        return { status: 201 as const, data: install, requiresAuth: toolVersion.tool.requiresAuth }
+        return {
+            status: 201 as const,
+            data: install,
+            requiresAuth: toolVersion.tool.requiresAuth,
+        }
     } catch (error) {
         console.error("installTool error:", error)
         return { status: 500 as const, message: "Internal error installing tool" }

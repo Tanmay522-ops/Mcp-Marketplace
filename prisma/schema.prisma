@@ -179,6 +179,7 @@ model Tool {
   oauthClientSecretEnvKey  String?
   oauthClientSecretEncrypted String?
   oauthScopes              String?
+  oauthExtraAuthorizeParams  Json?  
   workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   versions         ToolVersion[]
   categories       ToolCategory[]
