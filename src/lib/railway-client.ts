@@ -179,3 +179,15 @@ export const RAILWAY_SERVICE_DEPLOY = `
     serviceInstanceDeployV2(environmentId: $environmentId, serviceId: $serviceId)
   }
 `
+
+// Removes/cancels a specific deployment instance — this is Railway's stop
+// mechanism (there's no separate "stop" mutation; you remove the running
+// deployment). Confirmed against Railway's public API cookbook docs, same
+// verification level as RAILWAY_SERVICE_INSTANCE_UPDATE above — NOT
+// confirmed via live schema introspection. Re-verify against introspection
+// if stop requests start silently failing.
+export const RAILWAY_DEPLOYMENT_REMOVE = `
+  mutation DeploymentRemove($id: String!) {
+    deploymentRemove(id: $id)
+  }
+`

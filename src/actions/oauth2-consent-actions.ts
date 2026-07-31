@@ -13,9 +13,6 @@ export const approveOAuth2Consent = async (requestToken: string) => {
         return { status: 400 as const, message: "This authorization request has expired — start over from your MCP client." }
     }
 
-    // Re-check membership at approval time too, not just when the flow
-    // started — a request token could in principle sit unused for a
-    // while (up to its TTL) before the user clicks Allow.
     const ctx = await getCallerContext(pending.workspaceId)
     if (ctx.error) return ctx.error
 

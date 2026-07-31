@@ -180,6 +180,7 @@ model Tool {
   oauthClientSecretEncrypted String?
   oauthScopes              String?
   oauthExtraAuthorizeParams  Json?  
+  usesDynamicClientRegistration  Boolean  @default(false)
   workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   versions         ToolVersion[]
   categories       ToolCategory[]

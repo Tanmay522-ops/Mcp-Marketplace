@@ -16,15 +16,17 @@ const getStateSecret = (): string => {
 }
 
 // Stateless signed state: no DB row needed, can't be forged or replayed
-// past its TTL without knowing OAUTH_STATE_SECRET.
-export const signState = (payload: { workspaceId: string; toolId: string }): string => {
+// past its TTL without knowing OAUTH_STATE_SECRET. codeVerifier is optional
+// — only DCR-based tools (no client secret exists for them) need PKCE
+// carried through; classic tools like Linear never pass one, unaffected.
+export const signState = (payload: { workspaceId: string; toolId: string; codeVerifier?: string }): string => {
     const body = JSON.stringify({ ...payload, nonce: randomBytes(8).toString("hex"), ts: Date.now() })
     const bodyB64 = Buffer.from(body).toString("base64url")
     const sig = createHmac("sha256", getStateSecret()).update(bodyB64).digest("base64url")
     return `${bodyB64}.${sig}`
 }
 
-export const verifyState = (state: string): { workspaceId: string; toolId: string } | null => {
+export const verifyState = (state: string): { workspaceId: string; toolId: string; codeVerifier?: string } | null => {
     const [bodyB64, sig] = state.split(".")
     if (!bodyB64 || !sig) return null
     const expectedSig = createHmac("sha256", getStateSecret()).update(bodyB64).digest("base64url")
@@ -32,7 +34,7 @@ export const verifyState = (state: string): { workspaceId: string; toolId: strin
     try {
         const parsed = JSON.parse(Buffer.from(bodyB64, "base64url").toString("utf8"))
         if (Date.now() - parsed.ts > STATE_TTL_MS) return null // expired
-        return { workspaceId: parsed.workspaceId, toolId: parsed.toolId }
+        return { workspaceId: parsed.workspaceId, toolId: parsed.toolId, codeVerifier: parsed.codeVerifier }
     } catch {
         return null
     }

@@ -13,7 +13,20 @@ const installWithToolInclude = {
             capabilities: {
                 select: { id: true, name: true, description: true },
             },
-            tool: { select: { id: true, name: true, slug: true, logoUrl: true } },
+            tool: {
+                select: {
+                    id: true,
+                    name: true,
+                    slug: true,
+                    logoUrl: true,
+                    requiresAuth: true,
+                    deployments: {
+                        orderBy: { createdAt: "desc" },
+                        take: 1,
+                        select: { status: true },
+                    },
+                },
+            },
         },
     },
 } satisfies Prisma.InstallRecordInclude

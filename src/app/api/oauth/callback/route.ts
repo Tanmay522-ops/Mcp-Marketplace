@@ -34,7 +34,7 @@ const markPending = async (workspaceId: string, toolId: string) => {
         data: { status: "PENDING" },
     }).catch(() => {
         // install record genuinely doesn't exist yet (edge case, shouldn't
-        // normally happen since installMarketplaceTool creates it up front)
+        // normally happen since installTool creates it up front)
     })
 }
 
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Tool not found" }, { status: 404 })
     }
     const listUrl = new URL(`/dashboard/${workspaceId}/mcp`, req.nextUrl.origin)
-    const toolUrl = new URL(`/dashboard/${workspaceId}/mcp/${tool.slug}`, req.nextUrl.origin)
+    const toolUrl = new URL(`/dashboard/${workspaceId}/mcp/${toolId}`, req.nextUrl.origin)
 
     // --- outcome 1: user cancelled/denied on the provider's consent screen ---
     if (providerError) {
@@ -72,31 +72,57 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Tool auth configuration is missing or was removed" }, { status: 400 })
     }
 
-    const clientSecret = tool.oauthClientSecretEnvKey
-        ? process.env[tool.oauthClientSecretEnvKey]
-        : tool.oauthClientSecretEncrypted
-            ? decryptSecret(tool.oauthClientSecretEncrypted)
-            : undefined
-
-    if (!clientSecret) {
-        console.error("oauth callback: no client secret configured for tool", toolId)
-        await markPending(workspaceId, toolId)
-        return NextResponse.redirect(listUrl)
-    }
-
     const callbackUrl = new URL("/api/oauth/callback", req.nextUrl.origin).toString()
 
-    const tokenRes = await fetch(tool.oauthTokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-            grant_type: "authorization_code",
-            code,
-            redirect_uri: callbackUrl,
-            client_id: tool.oauthClientId,
-            client_secret: clientSecret,
-        }),
-    })
+    let tokenRes: Response
+
+    if (tool.usesDynamicClientRegistration) {
+        // DCR path (Notion): no client secret exists for this tool at
+        // all — proof of identity is the PKCE code_verifier we generated
+        // back in the authorize step, carried here via the signed state.
+        const codeVerifier = decoded.codeVerifier
+        if (!codeVerifier) {
+            console.error("oauth callback: DCR tool but no codeVerifier in state", toolId)
+            await markPending(workspaceId, toolId)
+            return NextResponse.redirect(listUrl)
+        }
+        tokenRes = await fetch(tool.oauthTokenUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: callbackUrl,
+                client_id: tool.oauthClientId,
+                code_verifier: codeVerifier,
+            }),
+        })
+    } else {
+        // Classic path (Linear, unchanged): real client secret required.
+        const clientSecret = tool.oauthClientSecretEnvKey
+            ? process.env[tool.oauthClientSecretEnvKey]
+            : tool.oauthClientSecretEncrypted
+                ? decryptSecret(tool.oauthClientSecretEncrypted)
+                : undefined
+
+        if (!clientSecret) {
+            console.error("oauth callback: no client secret configured for tool", toolId)
+            await markPending(workspaceId, toolId)
+            return NextResponse.redirect(listUrl)
+        }
+
+        tokenRes = await fetch(tool.oauthTokenUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: callbackUrl,
+                client_id: tool.oauthClientId,
+                client_secret: clientSecret,
+            }),
+        })
+    }
 
     // --- outcome 2: token exchange itself failed ---
     if (!tokenRes.ok) {
@@ -130,7 +156,7 @@ export async function GET(req: NextRequest) {
     // NOTE: installedById needs the actual signed-in user's id from your
     // session/auth helper (e.g. Clerk) — wire that in before this runs for
     // real. The `create` branch below is really just a defensive fallback;
-    // installMarketplaceTool should already have created this record.
+    // installTool should already have created this record.
     const currentUserId = "" // TODO: replace with real session user id
 
     // --- outcome 3: success ---
