@@ -1,23 +1,32 @@
 // app/api/oauth/callback/route.ts
 //
 // The third-party provider (Sentry, Linear, whatever) redirects the user
-// back here after the consent screen. Three outcomes, three different
-// results — matching the screenshots exactly:
-//   1. User cancels/denies      -> status PENDING, redirect to the list page
-//   2. Token exchange fails     -> status PENDING, redirect to the list page
-//   3. Success                  -> status ACTIVE,  redirect to the tool page
+// back here after the consent screen. Outcomes, matching the screenshots:
+//   1. User cancels/denies              -> status PENDING, redirect to list
+//   2. Token exchange fails (retryable) -> status PENDING, redirect to list
+//   3. Token exchange fails (config/     -> status FAILED,  redirect to list
+//      provider is actually broken)
+//   4. Provider returns 200 but body is  -> status FAILED,  redirect to list
+//      malformed/unparseable
+//   5. Success                          -> status ACTIVE,  redirect to tool page
 //
 // GET /api/oauth/callback?code=...&state=...
 
 import { client } from "@/lib/prisma"
 import { verifyState } from "@/lib/oauth-state"
 import { decryptSecret } from "@/lib/tool-crypto"
+import { auth } from "@clerk/nextjs/server"
 import { NextRequest, NextResponse } from "next/server"
 
-// Marks the install PENDING without ever regressing an already-ACTIVE
-// install back down (e.g. a user re-authorizing who then cancels midway
-// shouldn't lose a previously-working connection).
-const markPending = async (workspaceId: string, toolId: string) => {
+// Shared by markPending/markFailed: finds the published version + existing
+// install, and never regresses an already-ACTIVE install (e.g. a user
+// re-authorizing who then cancels midway shouldn't lose a previously
+// working connection).
+const setInstallStatus = async (
+    workspaceId: string,
+    toolId: string,
+    status: "PENDING" | "FAILED"
+) => {
     const publishedVersion = await client.toolVersion.findFirst({
         where: { toolId, status: "PUBLISHED" },
         orderBy: { createdAt: "desc" },
@@ -31,12 +40,33 @@ const markPending = async (workspaceId: string, toolId: string) => {
 
     await client.installRecord.update({
         where: { workspaceId_toolVersionId: { workspaceId, toolVersionId: publishedVersion.id } },
-        data: { status: "PENDING" },
+        data: { status },
     }).catch(() => {
         // install record genuinely doesn't exist yet (edge case, shouldn't
         // normally happen since installTool creates it up front)
     })
 }
+
+const markPending = (workspaceId: string, toolId: string) =>
+    setInstallStatus(workspaceId, toolId, "PENDING")
+
+const markFailed = (workspaceId: string, toolId: string) =>
+    setInstallStatus(workspaceId, toolId, "FAILED")
+
+// OAuth error codes that mean "the setup itself is broken" — retrying the
+// login flow won't help, someone needs to fix the client id/secret/config.
+//
+// Verified so far:
+//   - Linear: standard RFC 6749 shape, error code under `error`
+//   - Notion: non-standard shape, same values but under `code` instead
+//
+// Before adding a new provider here, confirm its actual token-endpoint
+// error body (not assumed from the OAuth spec) — some providers use
+// different field names entirely, or don't distinguish config errors
+// from retryable ones. Until verified, an unrecognized provider safely
+// falls through to PENDING below — it just means FAILED won't be
+// reachable for that provider until its shape is checked and added.
+const CONFIG_ERROR_CODES = new Set(["invalid_client", "unauthorized_client"])
 
 export async function GET(req: NextRequest) {
     const code = req.nextUrl.searchParams.get("code")
@@ -59,7 +89,7 @@ export async function GET(req: NextRequest) {
     const listUrl = new URL(`/dashboard/${workspaceId}/mcp`, req.nextUrl.origin)
     const toolUrl = new URL(`/dashboard/${workspaceId}/mcp/${toolId}`, req.nextUrl.origin)
 
-    // --- outcome 1: user cancelled/denied on the provider's consent screen ---
+    // --- user cancelled/denied on the provider's consent screen: retryable ---
     if (providerError) {
         await markPending(workspaceId, toolId)
         return NextResponse.redirect(listUrl)
@@ -82,6 +112,7 @@ export async function GET(req: NextRequest) {
         // back in the authorize step, carried here via the signed state.
         const codeVerifier = decoded.codeVerifier
         if (!codeVerifier) {
+            // Session/state issue, not a broken tool config — retryable.
             console.error("oauth callback: DCR tool but no codeVerifier in state", toolId)
             await markPending(workspaceId, toolId)
             return NextResponse.redirect(listUrl)
@@ -106,8 +137,10 @@ export async function GET(req: NextRequest) {
                 : undefined
 
         if (!clientSecret) {
+            // Nothing the user can do by retrying — the tool itself was
+            // never configured with a secret. Genuine failure.
             console.error("oauth callback: no client secret configured for tool", toolId)
-            await markPending(workspaceId, toolId)
+            await markFailed(workspaceId, toolId)
             return NextResponse.redirect(listUrl)
         }
 
@@ -124,22 +157,52 @@ export async function GET(req: NextRequest) {
         })
     }
 
-    // --- outcome 2: token exchange itself failed ---
+    // --- token exchange itself failed: split retryable vs config-broken ---
     if (!tokenRes.ok) {
         const detail = await tokenRes.text().catch(() => "")
         console.error("oauth callback: token exchange failed", tokenRes.status, detail)
-        await markPending(workspaceId, toolId)
+
+        let providerErrorCode: string | undefined
+        try {
+            const parsed = JSON.parse(detail)
+            // Linear (RFC 6749-style) uses `error`; Notion uses `code` instead.
+            providerErrorCode = parsed?.error ?? parsed?.code
+        } catch {
+            // Not JSON — leave providerErrorCode undefined, treat as retryable below.
+        }
+
+        if (providerErrorCode && CONFIG_ERROR_CODES.has(providerErrorCode)) {
+            await markFailed(workspaceId, toolId)
+        } else {
+            // Covers invalid_grant (expired/used code), server_error,
+            // temporarily_unavailable, and anything unparseable — all
+            // things a fresh retry can plausibly fix.
+            await markPending(workspaceId, toolId)
+        }
         return NextResponse.redirect(listUrl)
     }
 
-    const tokenJson = await tokenRes.json()
-    const accessToken: string | undefined = tokenJson.access_token
-    const refreshToken: string | undefined = tokenJson.refresh_token
-    const expiresInSeconds: number | undefined = tokenJson.expires_in
+    // --- provider said 200 OK, but the body itself might still be broken ---
+    let tokenJson: { access_token?: string; refresh_token?: string; expires_in?: number }
+    try {
+        tokenJson = await tokenRes.json()
+    } catch (err) {
+        // 200 OK with an empty body, HTML, or truncated JSON — provider's
+        // fault, not something a retry fixes.
+        console.error("oauth callback: token response was not valid JSON", toolId, err)
+        await markFailed(workspaceId, toolId)
+        return NextResponse.redirect(listUrl)
+    }
+
+    const accessToken = tokenJson.access_token
+    const refreshToken = tokenJson.refresh_token
+    const expiresInSeconds = tokenJson.expires_in
 
     if (!accessToken) {
+        // Provider said "ok" but gave us nothing usable — that's the
+        // provider's problem, not something a retry fixes.
         console.error("oauth callback: provider returned no access_token", toolId)
-        await markPending(workspaceId, toolId)
+        await markFailed(workspaceId, toolId)
         return NextResponse.redirect(listUrl)
     }
 
@@ -153,13 +216,19 @@ export async function GET(req: NextRequest) {
 
     const expiresAt = expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null
 
-    // NOTE: installedById needs the actual signed-in user's id from your
-    // session/auth helper (e.g. Clerk) — wire that in before this runs for
-    // real. The `create` branch below is really just a defensive fallback;
-    // installTool should already have created this record.
-    const currentUserId = "" // TODO: replace with real session user id
+    // Resolve the real signed-in user's internal id (not the Clerk id
+    // directly) — needed for the `create` fallback branch below, in the
+    // rare case installTool hasn't already created this record.
+    const { userId: clerkId } = await auth()
+    if (!clerkId) {
+        return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+    }
+    const user = await client.user.findUnique({ where: { clerkId } })
+    if (!user) {
+        return NextResponse.json({ error: "User not found" }, { status: 404 })
+    }
 
-    // --- outcome 3: success ---
+    // --- success ---
     await client.installRecord.upsert({
         where: { workspaceId_toolVersionId: { workspaceId, toolVersionId: publishedVersion.id } },
         update: {
@@ -171,7 +240,7 @@ export async function GET(req: NextRequest) {
         create: {
             workspaceId,
             toolVersionId: publishedVersion.id,
-            installedById: currentUserId,
+            installedById: user.id,
             method: "MANUAL",
             status: "ACTIVE",
             oauthAccessToken: accessToken,
