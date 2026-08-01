@@ -6,6 +6,7 @@
 // and callback routes can import from.
 
 import { createHmac, randomBytes } from "crypto"
+import { safeEqual } from "./safe-equal"
 
 const STATE_TTL_MS = 10 * 60 * 1000 // authorize -> callback must complete within 10 minutes
 
@@ -30,7 +31,7 @@ export const verifyState = (state: string): { workspaceId: string; toolId: strin
     const [bodyB64, sig] = state.split(".")
     if (!bodyB64 || !sig) return null
     const expectedSig = createHmac("sha256", getStateSecret()).update(bodyB64).digest("base64url")
-    if (sig !== expectedSig) return null // tampered
+    if (!safeEqual(sig, expectedSig)) return null // tampered
     try {
         const parsed = JSON.parse(Buffer.from(bodyB64, "base64url").toString("utf8"))
         if (Date.now() - parsed.ts > STATE_TTL_MS) return null // expired

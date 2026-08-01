@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from 'react'
+
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { X, Loader2, CheckCircle2, XCircle, Package as PackageIcon, Boxes, AlertTriangle, ArrowRight, Plus, Trash2 } from 'lucide-react'
@@ -16,6 +17,7 @@ import {
     DetectedVariable,
 } from '@/actions/deploy'
 import { deploymentStatusDisplay } from '@/lib/deployment-status'
+import { useMounted } from '@/hooks/use-mouneted'
 
 type Props = {
     workspaceId: string
@@ -57,11 +59,17 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
 
     const timedOutRef = useRef(false)
 
-    const [mounted, setMounted] = useState(false)
-    useEffect(() => setMounted(true), [])
+    const mounted = useMounted()
 
     useEffect(() => {
+        // Resets on every step/deploymentId change, then subscribes to a
+        // fresh timer for that specific deploy — this is the "reset, then
+        // subscribe to an external system" case the rule's own docs excuse,
+        // not the derived-state anti-pattern it's meant to catch. Safe to
+        // suppress rather than restructure and risk changing this timer's
+        // actual behavior.
         timedOutRef.current = false
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setPollTimedOut(false)
         if (step !== 'progress' || !deploymentId) return
         const timer = setTimeout(() => {
@@ -410,7 +418,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
                                         className="w-full h-9 px-3 rounded-md bg-black/5 dark:bg-white/5 text-[13px] text-foreground placeholder:text-muted-foreground/50 outline-none border border-transparent focus:border-primary"
                                     />
                                     <p className="text-[11.5px] text-muted-foreground mt-1.5 mb-4">
-                                        We'll look up the package's linked GitHub repository and deploy from there.
+                                        We&apos;ll look up the package&apos;s linked GitHub repository and deploy from there.
                                     </p>
                                 </>
                             )}
@@ -473,10 +481,10 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
                                 <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 mb-4">
                                     <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" strokeWidth={1.5} />
                                     <span className="text-amber-500 text-[12px] leading-relaxed">
-                                        We couldn't find anything buildable here (no Dockerfile, package.json,
+                                        We couldn&apos;t find anything buildable here (no Dockerfile, package.json,
                                         requirements.txt, etc.). This might be a docs-only repo for a server
-                                        that's already hosted elsewhere — check the README before deploying. You
-                                        can still continue if you're confident this is right.
+                                        that&apos;s already hosted elsewhere — check the README before deploying. You
+                                        can still continue if you&apos;re confident this is right.
                                     </span>
                                 </div>
                             )}
@@ -534,7 +542,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
                                         </p>
                                     ) : (
                                         <p className="text-[10.5px] text-amber-500 mb-5">
-                                            Nothing detected — if the deploy fails with "no start command," fill this in manually.
+                                            Nothing detected — if the deploy fails with &quot;no start command,&quot; fill this in manually.
                                         </p>
                                     )}
                                 </>
@@ -631,14 +639,14 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
                             )}
                             {currentStatus === 'RUNNING' && (
                                 <p className="text-[12px] text-muted-foreground mt-4 text-center max-w-sm">
-                                    Deployed. Connect an MCP client via the "Connect" button on this tool's page —
-                                    it'll walk you through logging in, no key to copy.
+                                    Deployed. Connect an MCP client via the &quot;Connect&quot; button on this tool&apos;s page —
+                                    it&apos;ll walk you through logging in, no key to copy.
                                 </p>
                             )}
                             {!isResolved && unrecognizedRailwayStatus && (
                                 <p className="text-[11.5px] text-muted-foreground mt-2 text-center">
                                     Railway reports: <span className="font-mono">{unrecognizedRailwayStatus}</span> — this
-                                    may still be progressing normally even though the label above hasn't updated.
+                                    may still be progressing normally even though the label above hasn&apos;t updated.
                                 </p>
                             )}
                             {!isResolved && pollTimedOut && (

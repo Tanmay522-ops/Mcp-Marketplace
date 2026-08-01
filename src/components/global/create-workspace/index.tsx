@@ -1,10 +1,12 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { X, Loader2 } from 'lucide-react'
 import { createWorkspace } from '@/actions/workspace'
+import { useMounted } from '@/hooks/use-mouneted'
 
 type Props = {
     open: boolean
@@ -20,8 +22,7 @@ const CreateWorkspaceModal = ({ open, onClose }: Props) => {
     // document isn't available during server rendering — only portal once
     // mounted in the browser, otherwise Next.js throws trying to
     // reference `document` on the server.
-    const [mounted, setMounted] = useState(false)
-    useEffect(() => setMounted(true), [])
+    const mounted = useMounted()
 
     if (!open || !mounted) return null
 

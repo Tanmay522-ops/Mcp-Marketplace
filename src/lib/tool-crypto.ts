@@ -78,11 +78,32 @@ export const getFreshOutboundToken = async (
 ): Promise<string | null> => {
     if (!install.oauthAccessToken) return null
 
+    // Stored encrypted since the oauth callback route was updated to
+    // encrypt these on write — decrypt before use. A malformed/undecryptable
+    // value (e.g. leftover plaintext from before this change, or a key
+    // rotation) is treated as "no usable token" rather than throwing and
+    // taking down the whole gateway request.
+    let decryptedAccessToken: string
+    try {
+        decryptedAccessToken = decryptSecret(install.oauthAccessToken)
+    } catch (error) {
+        console.error("getFreshOutboundToken: failed to decrypt stored access token", install.id, error)
+        return null
+    }
+
     const stillValid = !install.oauthExpiresAt || install.oauthExpiresAt.getTime() - EXPIRY_BUFFER_MS > Date.now()
-    if (stillValid) return install.oauthAccessToken
+    if (stillValid) return decryptedAccessToken
 
     if (!install.oauthRefreshToken || !tool.oauthTokenUrl || !tool.oauthClientId) {
         return null // expired, nothing we can do about it
+    }
+
+    let decryptedRefreshToken: string
+    try {
+        decryptedRefreshToken = decryptSecret(install.oauthRefreshToken)
+    } catch (error) {
+        console.error("getFreshOutboundToken: failed to decrypt stored refresh token", install.id, error)
+        return null
     }
 
     const clientSecret = tool.oauthClientSecretEnvKey
@@ -98,7 +119,7 @@ export const getFreshOutboundToken = async (
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({
                 grant_type: "refresh_token",
-                refresh_token: install.oauthRefreshToken,
+                refresh_token: decryptedRefreshToken,
                 client_id: tool.oauthClientId,
                 client_secret: clientSecret,
             }),
@@ -114,8 +135,8 @@ export const getFreshOutboundToken = async (
         await client.installRecord.update({
             where: { id: install.id },
             data: {
-                oauthAccessToken: newAccessToken,
-                oauthRefreshToken: newRefreshToken ?? install.oauthRefreshToken,
+                oauthAccessToken: encryptSecret(newAccessToken),
+                oauthRefreshToken: newRefreshToken ? encryptSecret(newRefreshToken) : install.oauthRefreshToken,
                 oauthExpiresAt: expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null,
             },
         })

@@ -27,7 +27,8 @@ type AuthServerMetadata = {
 // already has a cached oauthClientId, so registration only actually
 // happens once, ever, per tool.
 export const ensureDynamicClientRegistered = async (
-    toolId: string
+    toolId: string,
+    callbackUrl: string
 ): Promise<{ authorizeUrl: string; tokenUrl: string; clientId: string } | { error: string }> => {
     const tool = await client.tool.findUnique({ where: { id: toolId } })
     if (!tool) return { error: "Tool not found" }
@@ -64,15 +65,18 @@ export const ensureDynamicClientRegistered = async (
     }
 
     // Step 3: register, right now, automatically — no human, no dashboard.
-    const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_BASE_URL
-    if (!gatewayBase) return { error: "NEXT_PUBLIC_GATEWAY_BASE_URL is not set" }
-
+    // Was built from NEXT_PUBLIC_GATEWAY_BASE_URL, a separate proxy
+    // service that only routes /{workspaceSlug}/{toolSlug}/mcp paths — it
+    // has no reason to forward /api/oauth/callback back to this app. Use
+    // the caller-supplied callbackUrl instead, which is this app's own
+    // real origin (matches the classic/Linear path, and matches what the
+    // callback route itself sends as redirect_uri during token exchange).
     const registerRes = await fetch(registration_endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             client_name: process.env.NEXT_PUBLIC_PLATFORM_NAME ?? "TODO_YOUR_PLATFORM_NAME_HERE",
-            redirect_uris: [`${gatewayBase}/api/oauth/callback`],
+            redirect_uris: [callbackUrl],
         }),
     })
     if (!registerRes.ok) return { error: "Dynamic client registration was rejected" }

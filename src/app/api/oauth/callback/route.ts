@@ -14,8 +14,8 @@
 
 import { client } from "@/lib/prisma"
 import { verifyState } from "@/lib/oauth-state"
-import { decryptSecret } from "@/lib/tool-crypto"
-import { auth } from "@clerk/nextjs/server"
+import { decryptSecret, encryptSecret } from "@/lib/tool-crypto"
+import { getCallerContext } from "@/hooks/useCallerContext"
 import { NextRequest, NextResponse } from "next/server"
 
 // Shared by markPending/markFailed: finds the published version + existing
@@ -81,6 +81,16 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Invalid or expired authorization attempt — try again" }, { status: 400 })
     }
     const { workspaceId, toolId } = decoded
+
+    // Enforce that whoever is completing this OAuth flow actually belongs
+    // to the workspace embedded in the signed state — without this, any
+    // authenticated user could finish the provider's consent screen with
+    // their OWN third-party account and have those tokens written into an
+    // arbitrary victim workspace's InstallRecord below.
+    const ctx = await getCallerContext(workspaceId)
+    if (ctx.error) {
+        return NextResponse.json({ error: ctx.error.message }, { status: ctx.error.status })
+    }
 
     const tool = await client.tool.findFirst({ where: { id: toolId, workspaceId } })
     if (!tool) {
@@ -216,35 +226,34 @@ export async function GET(req: NextRequest) {
 
     const expiresAt = expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null
 
-    // Resolve the real signed-in user's internal id (not the Clerk id
-    // directly) — needed for the `create` fallback branch below, in the
-    // rare case installTool hasn't already created this record.
-    const { userId: clerkId } = await auth()
-    if (!clerkId) {
-        return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
-    }
-    const user = await client.user.findUnique({ where: { clerkId } })
-    if (!user) {
-        return NextResponse.json({ error: "User not found" }, { status: 404 })
-    }
+    // ctx.userId is already the caller's internal User.id, resolved by
+    // getCallerContext above — no need for a separate lookup here.
+
+    // Encrypt before storing — these are a real, live third-party access
+    // token and refresh token, not just our own signed state. Previously
+    // stored in plaintext; encryptSecret/decryptSecret already exist and
+    // are used for oauthClientSecretEncrypted on Tool, so this reuses the
+    // same helper rather than introducing a second scheme.
+    const encryptedAccessToken = encryptSecret(accessToken)
+    const encryptedRefreshToken = refreshToken ? encryptSecret(refreshToken) : null
 
     // --- success ---
     await client.installRecord.upsert({
         where: { workspaceId_toolVersionId: { workspaceId, toolVersionId: publishedVersion.id } },
         update: {
-            oauthAccessToken: accessToken,
-            oauthRefreshToken: refreshToken ?? null,
+            oauthAccessToken: encryptedAccessToken,
+            oauthRefreshToken: encryptedRefreshToken,
             oauthExpiresAt: expiresAt,
             status: "ACTIVE",
         },
         create: {
             workspaceId,
             toolVersionId: publishedVersion.id,
-            installedById: user.id,
+            installedById: ctx.userId,
             method: "MANUAL",
             status: "ACTIVE",
-            oauthAccessToken: accessToken,
-            oauthRefreshToken: refreshToken ?? null,
+            oauthAccessToken: encryptedAccessToken,
+            oauthRefreshToken: encryptedRefreshToken,
             oauthExpiresAt: expiresAt,
         },
     })

@@ -59,7 +59,15 @@ export const sendInvite = async ({ workspaceId, email, role }: SendInviteInput) 
             },
         })
 
-        const acceptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/invite/${invite.id}`
+        // Was NEXT_PUBLIC_APP_URL, which is never defined anywhere in this
+        // project — every invite email rendered a literal
+        // "undefined/invite/<id>" link. NEXT_PUBLIC_HOST_URL is the var
+        // actually defined in .env.
+        const hostUrl = process.env.NEXT_PUBLIC_HOST_URL
+        if (!hostUrl) {
+            console.warn("sendInvite: NEXT_PUBLIC_HOST_URL is not set — the invite email's link will be broken.")
+        }
+        const acceptUrl = `${hostUrl ?? ""}/invite/${invite.id}`
         const senderName = invite.sender.firstName
             ? `${invite.sender.firstName} ${invite.sender.lastName ?? ""}`.trim()
             : invite.sender.email
@@ -67,32 +75,32 @@ export const sendInvite = async ({ workspaceId, email, role }: SendInviteInput) 
         let emailSent = true
         try {
             const { error: sendError } = await resend.emails.send({
-                from: "Acme <onboarding@resend.dev>", 
+                from: "Acme <onboarding@resend.dev>",
                 to: email,
                 subject: `You've been invited to ${invite.workspace.name}`,
                 react: (
                     <InviteEmail
-            workspaceName= { invite.workspace.name }
-            senderName={ senderName }
-            role={ role }
-            acceptUrl={ acceptUrl }
-                />
-        ),
-        })
-        if (sendError) {
-            console.error("sendInvite: Resend returned an error:", sendError)
+                        workspaceName={invite.workspace.name}
+                        senderName={senderName}
+                        role={role}
+                        acceptUrl={acceptUrl}
+                    />
+                ),
+            })
+            if (sendError) {
+                console.error("sendInvite: Resend returned an error:", sendError)
+                emailSent = false
+            }
+        } catch (emailError) {
+            console.error("sendInvite: failed to send invite email:", emailError)
             emailSent = false
         }
-    } catch (emailError) {
-        console.error("sendInvite: failed to send invite email:", emailError)
-        emailSent = false
-    }
 
-    return { status: 201 as const, data: invite, emailSent }
-} catch (error) {
-    console.error("sendInvite error:", error)
-    return { status: 500 as const, message: "Internal error sending invite" }
-}
+        return { status: 201 as const, data: invite, emailSent }
+    } catch (error) {
+        console.error("sendInvite error:", error)
+        return { status: 500 as const, message: "Internal error sending invite" }
+    }
 }
 
 export const getWorkspaceInvites = async (workspaceId: string) => {

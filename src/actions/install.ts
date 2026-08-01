@@ -77,6 +77,9 @@ export type MarketplaceTool = Prisma.ToolGetPayload<{
 
 export const searchMarketplaceTools = async (workspaceId: string, query?: string) => {
     try {
+        const ctx = await getCallerContext(workspaceId)
+        if (ctx.error) return ctx.error
+
         const tools = await client.tool.findMany({
             where: {
                 visibility: "PUBLIC",
@@ -155,7 +158,7 @@ export const installTool = async ({ workspaceId, toolVersionId, method = "MANUAL
                 where: { toolId: toolVersion.toolId },
                 data: { totalInstalls: { increment: 1 } },
             })
-            .catch((err) => console.error("installTool: analytics increment failed:", err))
+            .catch((err: unknown) => console.error("installTool: analytics increment failed:", err))
 
         return {
             status: 201 as const,

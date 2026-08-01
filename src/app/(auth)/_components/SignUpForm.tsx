@@ -1,6 +1,7 @@
 'use client';
 
 import { useSignUp } from '@clerk/nextjs';
+import { isClerkAPIResponseError } from '@clerk/nextjs/errors';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { X } from 'lucide-react';
@@ -56,12 +57,12 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
             setIsLoading(true);
             setErrors({});
 
-        
+
 
             const result = await signUp.password({
                 emailAddress,
                 password,
-            } as any);
+            });
 
             if (result.error) throw result.error;
 
@@ -69,9 +70,9 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
             if (verificationResult.error) throw verificationResult.error;
 
             setVerifying(true);
-        } catch (err: any) {
-            if (err.errors?.length > 0) {
-                err.errors.forEach((error: any) => {
+        } catch (err) {
+            if (isClerkAPIResponseError(err) && err.errors.length > 0) {
+                err.errors.forEach((error) => {
                     switch (error.code) {
                         case 'form_password_length_too_short':
                             setErrors((prev) => ({ ...prev, password: 'Password must be at least 8 characters.' }));
@@ -105,9 +106,9 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
             if (finalizeResult.error) throw finalizeResult.error;
 
             router.push('/callback');
-        } catch (err: any) {
-            if (err.errors?.length > 0) {
-                err.errors.forEach((error: any) => {
+        } catch (err) {
+            if (isClerkAPIResponseError(err) && err.errors.length > 0) {
+                err.errors.forEach((error) => {
                     switch (error.code) {
                         case 'form_code_incorrect':
                             setErrors((prev) => ({ ...prev, general: 'Incorrect verification code' }));
@@ -266,18 +267,18 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
                             onClick={() => signUpWith('oauth_google')}
                             className="h-11 rounded-xl border-border bg-card text-foreground hover:bg-accent"
                         >
-                              <GoogleIcon />
+                            <GoogleIcon />
                             Continue with Google
                         </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => signUpWith("oauth_github")}
-                                className="h-11 rounded-xl border-border bg-card text-foreground hover:bg-accent"
-                            >
-                                <GitHubIcon className="mr-2 h-4 w-4" />
-                                Continue with GitHub
-                            </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => signUpWith("oauth_github")}
+                            className="h-11 rounded-xl border-border bg-card text-foreground hover:bg-accent"
+                        >
+                            <GitHubIcon className="mr-2 h-4 w-4" />
+                            Continue with GitHub
+                        </Button>
 
                         <p className="text-center text-xs text-muted-foreground mt-1">
                             By signing up you agree to our{' '}

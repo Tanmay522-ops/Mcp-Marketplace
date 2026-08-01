@@ -1,6 +1,7 @@
 'use client';
 
 import { useClerk, useSignIn } from '@clerk/nextjs';
+import { isClerkAPIResponseError } from '@clerk/nextjs/errors';
 import { OAuthStrategy } from '@clerk/types';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -47,10 +48,10 @@ export default function SignInForm() {
 
             toast.success('Login successful!');
             router.push('/callback');
-        } catch (err: any) {
+        } catch (err) {
             console.error(err);
-            if (err.errors?.length > 0) {
-                err.errors.forEach((error: any) => {
+            if (isClerkAPIResponseError(err) && err.errors.length > 0) {
+                err.errors.forEach((error) => {
                     switch (error.code) {
                         case 'form_password_incorrect':
                             setErrors((prev) => ({ ...prev, password: 'Incorrect password.' }));
@@ -82,7 +83,7 @@ export default function SignInForm() {
                 redirectUrl: '/callback',
                 redirectCallbackUrl: '/callback',
             });
-        } catch (err: any) {
+        } catch (err) {
             console.error(err);
         }
     };

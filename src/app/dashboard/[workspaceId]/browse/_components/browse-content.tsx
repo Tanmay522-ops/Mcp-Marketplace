@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Search, Plus, Package, Loader2, Link2Off } from 'lucide-react'
+import { Search, Plus, Package, Loader2, Check } from 'lucide-react'
 import { searchMarketplaceTools, installTool, MarketplaceTool } from '@/actions/install'
 import DeployPanel from './deploy-panel'
 
@@ -17,6 +17,7 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
     const queryClient = useQueryClient()
     const [query, setQuery] = useState('')
     const [installingId, setInstallingId] = useState<string | null>(null)
+    const [installError, setInstallError] = useState<string | null>(null)
     const [isDeployOpen, setIsDeployOpen] = useState(false)
 
     const { data: result } = useQuery({
@@ -36,12 +37,12 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
     // from there, not automatically the instant they click Add.
     const handleInstall = async (toolVersionId: string, toolId: string) => {
         setInstallingId(toolVersionId)
+        setInstallError(null)
         const res = await installTool({ workspaceId, toolVersionId })
         setInstallingId(null)
 
         if (res.status !== 201 || !res.data) {
-            // TODO: surface res.message to the user (toast, inline error, etc.)
-            console.error('installTool failed:', res.message)
+            setInstallError(res.message ?? 'Failed to add this tool — try again.')
             return
         }
 
@@ -73,54 +74,49 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
             )
         }
 
-        // Every non-active status just navigates to the tool's own page —
-        // that's where the real Authorize button and its "Connecting..."
-        // state live, not here on the browse grid.
-        if (install.status === 'NOT_CONNECTED') {
-            return (
-                <button
-                    onClick={() => goToToolPage(tool.id)}
-                    className="h-7 px-3 rounded-md border border-border/50 text-muted-foreground/70 text-[12px] font-medium hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-1.5"
-                >
-                    <Link2Off className="w-3 h-3" strokeWidth={1.5} />
-                    Connect
-                </button>
-            )
-        }
-
-        if (install.status === 'PENDING') {
-            return (
-                <button
-                    onClick={() => goToToolPage(tool.id)}
-                    className="h-7 px-3 rounded-md bg-amber-500/10 text-amber-500 text-[12px] font-medium hover:bg-amber-500/20 transition-colors flex items-center gap-1"
-                >
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                    Pending
-                </button>
-            )
-        }
-
-        if (install.status === 'FAILED') {
-            return (
-                <button
-                    onClick={() => goToToolPage(tool.id)}
-                    className="h-7 px-3 rounded-md bg-red-500/10 text-red-500 text-[12px] font-medium hover:bg-red-500/20 transition-colors flex items-center gap-1"
-                >
-                    Retry
-                </button>
-            )
-        }
-
-        // ACTIVE
+        // Once a tool has an install record at all — regardless of
+        // connection status — the bottom slot is just "Manage". The
+        // tool's own page is where the real status, Authorize button,
+        // and retry live, not here on the browse grid. The ACTIVE-only
+        // "✓ ADDED" indicator next to the name (renderStatusChip below)
+        // is untouched.
         return (
-            <span className="h-7 px-3 rounded-md bg-emerald-500/10 text-emerald-500 text-[12px] font-medium flex items-center gap-1">
-                ✓ Added
+            <button
+                onClick={() => goToToolPage(tool.id)}
+                className="h-7 px-3 rounded-md border border-border/50 text-foreground text-[12px] font-medium hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+            >
+                Manage
+            </button>
+        )
+    }
+
+    // Small pill shown next to the tool's name once installed — separate
+    // from renderAddButton, which now only controls the action slot at
+    // the bottom of the card (Add/Manage).
+    const renderStatusChip = (tool: MarketplaceTool) => {
+        const version = tool.versions[0]
+        const install = version?.installs[0]
+        if (!install) return null
+
+        return (
+            <span className="h-5 px-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-500 text-[10px] font-semibold uppercase tracking-wide flex items-center gap-1 shrink-0">
+                <Check className="w-2.5 h-2.5" strokeWidth={3} />
+                Added
             </span>
         )
     }
 
     return (
         <>
+            {installError && (
+                <div className="mb-4 px-3 py-2 rounded-md bg-red-500/10 text-red-500 text-[12.5px] flex items-center justify-between gap-3">
+                    <span>{installError}</span>
+                    <button onClick={() => setInstallError(null)} className="text-red-500/70 hover:text-red-500 shrink-0">
+                        Dismiss
+                    </button>
+                </div>
+            )}
+
             <div className="flex items-center justify-between mb-6">
                 <div className="relative w-full max-w-xs">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50" />
@@ -156,7 +152,7 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
                                         key={tool.id}
                                         className="border border-border/50 rounded-lg p-4 flex flex-col gap-3 bg-card"
                                     >
-                                        <div className="flex items-center gap-2.5">
+                                        <div className="flex items-center gap-2.5 min-w-0">
                                             <div className="w-8 h-8 rounded-md bg-black/10 dark:bg-white/10 flex items-center justify-center overflow-hidden shrink-0">
                                                 {tool.logoUrl ? (
                                                     // eslint-disable-next-line @next/next/no-img-element
@@ -165,7 +161,8 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
                                                     <Package className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
                                                 )}
                                             </div>
-                                            <span className="text-[13.5px] font-medium text-foreground truncate">{tool.name}</span>
+                                            <span className="text-[13.5px] font-medium text-foreground truncate min-w-0">{tool.name}</span>
+                                            {renderStatusChip(tool)}
                                         </div>
                                         <p className="text-[12px] text-muted-foreground line-clamp-2 flex-1">{tool.description}</p>
                                         <div>{renderAddButton(tool)}</div>
@@ -200,7 +197,8 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
                                                         <Package className="w-3 h-3 text-muted-foreground" strokeWidth={1.5} />
                                                     )}
                                                 </div>
-                                                <span className="text-[13px] font-medium text-foreground truncate">{tool.name}</span>
+                                                <span className="text-[13px] font-medium text-foreground truncate min-w-0">{tool.name}</span>
+                                                {renderStatusChip(tool)}
                                             </div>
                                             <span className="text-[12.5px] text-muted-foreground truncate">{tool.description}</span>
                                             <div>{renderAddButton(tool)}</div>

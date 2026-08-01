@@ -296,7 +296,19 @@ export const detectToolVariables = async (
 // Maps our client-facing "source" (which includes npm/pypi) to the
 // Prisma ToolSourceType stored on Tool/Deployment, and to what Railway
 // actually needs (which only knows github vs. image).
-const toPrismaSourceType = (source: DeploySource): "GITHUB" | "NPM" | "PYPI" | "DOCKER" => source.toUpperCase() as any
+//
+// Was `source.toUpperCase() as any` — bypassed verifying the uppercased
+// string actually matches the Prisma enum. An explicit Record instead
+// means TypeScript itself now errors if DeploySource ever gains a new
+// value without a matching entry here, instead of compiling cleanly and
+// only failing later at the DB write (or silently storing a bad value).
+const SOURCE_TYPE_MAP: Record<DeploySource, "GITHUB" | "NPM" | "PYPI" | "DOCKER"> = {
+    github: "GITHUB",
+    npm: "NPM",
+    pypi: "PYPI",
+    docker: "DOCKER",
+}
+const toPrismaSourceType = (source: DeploySource): "GITHUB" | "NPM" | "PYPI" | "DOCKER" => SOURCE_TYPE_MAP[source]
 
 export const deployCustomTool = async ({
     workspaceId,
@@ -569,6 +581,16 @@ export const deployCustomTool = async ({
                     errorMessage: railwayError instanceof Error ? railwayError.message : "Unknown Railway error",
                 },
             })
+            // Intentionally still 201, not an error status: a real Deployment
+            // row now exists (with status ERROR), which is what deploy-panel.tsx
+            // actually needs — it only checks status/data here to decide
+            // whether to move to the progress screen with a real deploymentId.
+            // The next poll immediately sees status "ERROR" already set (no
+            // extra Railway call, pollDeploymentStatus short-circuits on
+            // RUNNING/ERROR) and the panel renders the failure from there.
+            // Confirmed this is the deliberate design, not an inconsistency —
+            // don't "fix" this to a failure status without also changing how
+            // the panel decides when to show the progress screen.
             return { status: 201 as const, data: { toolId: tool.id, deploymentId: deployment.id } }
         }
     } catch (error) {
@@ -579,10 +601,23 @@ export const deployCustomTool = async ({
 
 export const pollDeploymentStatus = async (deploymentId: string) => {
     try {
-        const deployment = await client.deployment.findUnique({ where: { id: deploymentId } })
+        const deployment = await client.deployment.findUnique({
+            where: { id: deploymentId },
+            include: { tool: { select: { workspaceId: true } } },
+        })
         if (!deployment) {
             return { status: 404 as const, message: "Deployment not found" }
         }
+
+        // Unlike every other exported action in this file, this one took
+        // a bare deploymentId with no membership check at all — any
+        // authenticated user who knew or guessed an id could read another
+        // workspace's deployment status/error message, and indirectly
+        // trigger writes (the update below) and Railway project deletion
+        // through this same function on an ERROR transition.
+        const ctx = await getCallerContext(deployment.tool.workspaceId)
+        if (ctx.error) return ctx.error
+
         if (!deployment.railwayServiceId || !deployment.railwayProjectId) {
             return { status: 200 as const, data: deployment, unrecognizedRailwayStatus: null }
         }

@@ -11,6 +11,7 @@
 // GET /api/oauth/authorize?workspaceId=...&toolId=...
 
 import { client } from "@/lib/prisma"
+import { getCallerContext } from "@/hooks/useCallerContext"
 import { signState } from "@/lib/oauth-state"
 import { generatePkcePair } from "@/lib/pkce"
 
@@ -23,6 +24,16 @@ export async function GET(req: NextRequest) {
 
     if (!workspaceId || !toolId) {
         return NextResponse.json({ error: "workspaceId and toolId are required" }, { status: 400 })
+    }
+
+    // Confirm the caller actually belongs to this workspace before doing
+    // anything else — without this, any authenticated user could start
+    // this flow with someone else's workspaceId, complete the provider's
+    // consent screen with their OWN third-party account, and have those
+    // tokens land in a victim workspace's InstallRecord via the callback.
+    const ctx = await getCallerContext(workspaceId)
+    if (ctx.error) {
+        return NextResponse.json({ error: ctx.error.message }, { status: ctx.error.status })
     }
 
     const tool = await client.tool.findFirst({ where: { id: toolId, workspaceId } })
@@ -44,7 +55,7 @@ export async function GET(req: NextRequest) {
         // DCR path (Notion): discover + register on first use, cached
         // after that — see lib/dynamic-client-registration.ts. No client
         // secret exists for this path; PKCE is the proof instead.
-        const registration = await ensureDynamicClientRegistered(tool.id)
+        const registration = await ensureDynamicClientRegistered(tool.id, callbackUrl)
         if ("error" in registration) {
             return NextResponse.json({ error: registration.error }, { status: 400 })
         }

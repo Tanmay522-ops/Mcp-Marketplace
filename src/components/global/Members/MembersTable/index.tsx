@@ -79,7 +79,7 @@ const MembersTable = ({ workspaceId, callerId }: Props) => {
                             <div className="flex items-center gap-3 min-w-0">
                                 <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-semibold text-[12px] shadow-sm overflow-hidden shrink-0">
                                     {member.user.imageUrl ? (
-                                   
+                                        // eslint-disable-next-line @next/next/no-img-element
                                         <img
                                             src={member.user.imageUrl}
                                             alt={displayName(member)}

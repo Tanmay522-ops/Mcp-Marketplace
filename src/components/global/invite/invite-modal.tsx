@@ -1,10 +1,12 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { X, Mail, Loader2 } from 'lucide-react'
 import { getWorkspaceInvites, revokeInvite, sendInvite } from '@/actions/invite'
+import { useMounted } from '@/hooks/use-mouneted'
 
 
 type Props = {
@@ -22,8 +24,7 @@ const InviteModal = ({ workspaceId, open, onClose }: Props) => {
     const [isSending, setIsSending] = useState(false)
     const [revokingId, setRevokingId] = useState<string | null>(null)
 
-    const [mounted, setMounted] = useState(false)
-    useEffect(() => setMounted(true), [])
+    const mounted = useMounted()
 
     // Only fetch while the modal is actually open — no point holding a
     // background poll running for a panel nobody's looking at.

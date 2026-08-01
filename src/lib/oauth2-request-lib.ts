@@ -6,6 +6,7 @@
 // different payload shape.
 
 import { createHmac, randomBytes } from "crypto"
+import { safeEqual } from "./safe-equal"
 
 const REQUEST_TTL_MS = 10 * 60 * 1000
 
@@ -37,7 +38,7 @@ export const verifyAuthRequest = (token: string): PendingAuthRequest | null => {
     const [bodyB64, sig] = token.split(".")
     if (!bodyB64 || !sig) return null
     const expected = createHmac("sha256", getSecret()).update(bodyB64).digest("base64url")
-    if (sig !== expected) return null
+    if (!safeEqual(sig, expected)) return null
     try {
         const parsed = JSON.parse(Buffer.from(bodyB64, "base64url").toString("utf8"))
         if (Date.now() - parsed.ts > REQUEST_TTL_MS) return null

@@ -95,6 +95,13 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api) return
+    // Standard shadcn/ui carousel boilerplate — syncs `scrolled`/selected
+    // state once immediately on mount, then subscribes to further updates.
+    // Same "reset, then subscribe to an external system" shape as the
+    // rule's own docs excuse. Left as unmodified vendor code rather than
+    // restructured, since this is the reference implementation and I
+    // can't verify carousel behavior end-to-end in this environment.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     onSelect(api)
     api.on("reInit", onSelect)
     api.on("select", onSelect)

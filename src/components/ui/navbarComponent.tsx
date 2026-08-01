@@ -1,5 +1,6 @@
 'use client';
 import React from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { createPortal } from 'react-dom';
@@ -57,9 +58,9 @@ export function Header() {
         >
             <nav className="mx-auto flex w-full max-w-9xl items-center justify-between">
                 <div className="flex items-center gap-6">
-                    <a href="/" className="hover:bg-white/5 rounded-md p-2">
+                    <Link href="/" className="hover:bg-white/5 rounded-md p-2">
                         <WordmarkIcon className="h-6 text-white" />
-                    </a>
+                    </Link>
                     <NavigationMenu className="hidden md:flex">
                         <NavigationMenuList>
                             <NavigationMenuItem>
@@ -104,8 +105,8 @@ export function Header() {
                     </NavigationMenu>
                 </div>
                 <div className="hidden items-center gap-4 md:flex">
-                  <SignInModal/>
-                  <SignUpModal/>
+                    <SignInModal />
+                    <SignUpModal />
                 </div>
                 <Button
                     size="icon"
@@ -273,18 +274,18 @@ const resourceLinks: LinkItem[] = [
 function useScroll(threshold: number) {
     const [scrolled, setScrolled] = React.useState(false);
 
-    const onScroll = React.useCallback(() => {
-        setScrolled(window.scrollY > threshold);
-    }, [threshold]);
-
     React.useEffect(() => {
+        const onScroll = () => setScrolled(window.scrollY > threshold);
         window.addEventListener('scroll', onScroll);
-        return () => window.removeEventListener('scroll', onScroll);
-    }, [onScroll]);
-
-    React.useEffect(() => {
+        // Sync immediately on mount/threshold-change, not just on the next
+        // scroll event — same "sync, then subscribe" idiom as the
+        // deploy-panel timer effect and the carousel vendor code above,
+        // not the derived-state anti-pattern the rule targets. Merging
+        // this into one effect (was two) also removes the extra
+        // mount-time render pass the old version had.
         onScroll();
-    }, [onScroll]);
+        return () => window.removeEventListener('scroll', onScroll);
+    }, [threshold]);
 
     return scrolled;
 }
