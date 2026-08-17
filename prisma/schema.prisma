@@ -181,6 +181,9 @@ model Tool {
   oauthScopes              String?
   oauthExtraAuthorizeParams  Json?  
   usesDynamicClientRegistration  Boolean  @default(false)
+  usesApiKey       Boolean  @default(false)
+  apiKeyHeaderName String?
+  apiKeyValidationUrl String?
   workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   versions         ToolVersion[]
   categories       ToolCategory[]
@@ -272,6 +275,7 @@ model InstallRecord {
   oauthAccessToken  String?
   oauthRefreshToken String?
   oauthExpiresAt    DateTime?
+  apiKeyEncrypted   String?
   workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   toolVersion    ToolVersion   @relation(fields: [toolVersionId], references: [id])
   installedBy    User          @relation("InstalledBy", fields: [installedById], references: [id])

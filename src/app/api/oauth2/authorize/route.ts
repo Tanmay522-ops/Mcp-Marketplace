@@ -72,7 +72,22 @@ export async function GET(req: NextRequest) {
     // codebase uses, rather than inventing a separate session check here.
     const ctx = await getCallerContext(tool.workspaceId)
     if (ctx.error) {
-        const loginUrl = new URL("/login", req.nextUrl.origin) // adjust to your actual login route
+        // FIXED: was `new URL("/login", ...)` — that route doesn't exist
+        // anywhere in this app (sign-in is modal-based, triggered from
+        // the home page, not a dedicated page route). Redirecting there
+        // was a genuine dead end — a 404 for anyone hitting an external
+        // MCP client's auth flow while signed out.
+        //
+        // Sending to "/" with redirect_to preserved, same as before —
+        // but this assumes the home page/root layout actually reads
+        // redirect_to and opens the sign-in modal + redirects onward
+        // after a successful login. CONFIRM THIS ASSUMPTION: if the home
+        // page doesn't already do that, this redirect still dead-ends
+        // (silently, not as a 404 — arguably worse, since it looks like
+        // it worked). If there's a different real entry point for
+        // triggering sign-in in this app, swap the path below for that
+        // instead.
+        const loginUrl = new URL("/", req.nextUrl.origin)
         loginUrl.searchParams.set("redirect_to", req.nextUrl.toString())
         return NextResponse.redirect(loginUrl)
     }

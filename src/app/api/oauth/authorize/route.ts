@@ -36,9 +36,15 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: ctx.error.message }, { status: ctx.error.status })
     }
 
-    const tool = await client.tool.findFirst({ where: { id: toolId, workspaceId } })
-    if (!tool) {
-        return NextResponse.json({ error: "Tool not found in this workspace" }, { status: 404 })
+    // Deliberately NOT scoped by workspaceId — same bug class already
+    // fixed in getToolDetail/uninstallTool: a marketplace tool's Tool row
+    // is owned by whichever workspace originally published it, not by
+    // every workspace that installed it. A brand-new workspace
+    // authorizing an existing public tool (e.g. Linear) would 404 here
+    // otherwise, even though it clearly has that tool installed.
+    const tool = await client.tool.findUnique({ where: { id: toolId } })
+    if (!tool || (tool.workspaceId !== workspaceId && tool.visibility !== "PUBLIC")) {
+        return NextResponse.json({ error: "Tool not found" }, { status: 404 })
     }
     if (!tool.requiresAuth) {
         return NextResponse.json({ error: "This tool has no OAuth configuration" }, { status: 400 })
@@ -50,6 +56,7 @@ export async function GET(req: NextRequest) {
     let clientId: string
     let codeVerifier: string | undefined
     let codeChallenge: string | undefined
+    let isClassicPath = false
 
     if (tool.usesDynamicClientRegistration) {
         // DCR path (Notion): discover + register on first use, cached
@@ -71,6 +78,7 @@ export async function GET(req: NextRequest) {
         }
         authorizeUrlBase = tool.oauthAuthorizeUrl
         clientId = tool.oauthClientId
+        isClassicPath = true
     }
 
     const state = signState({ workspaceId, toolId, codeVerifier })
@@ -81,6 +89,21 @@ export async function GET(req: NextRequest) {
     authorizeUrl.searchParams.set("redirect_uri", callbackUrl)
     authorizeUrl.searchParams.set("state", state)
     if (tool.oauthScopes) authorizeUrl.searchParams.set("scope", tool.oauthScopes)
+    // Default to forcing the provider's consent screen every time, for
+    // every classic OAuth tool — not just Linear. Without this, most
+    // OAuth providers silently skip consent on repeat authorizations once
+    // a user has approved once, which makes re-authenticating/reconnecting
+    // look like nothing happened. Confirmed this is a real, documented
+    // param for Linear specifically; assumed (not individually verified)
+    // to be supported the same way for other classic providers, since
+    // `prompt=consent` is a common OAuth2/OIDC convention, not a Linear-
+    // specific one. Set BEFORE the extraParams loop below so a tool's own
+    // oauthExtraAuthorizeParams can still override this if a specific
+    // provider ever needs something different (e.g. doesn't support
+    // `prompt` at all, or uses a different param name for the same idea).
+    if (isClassicPath) {
+        authorizeUrl.searchParams.set("prompt", "consent")
+    }
     if (codeChallenge) {
         authorizeUrl.searchParams.set("code_challenge", codeChallenge)
         authorizeUrl.searchParams.set("code_challenge_method", "S256")

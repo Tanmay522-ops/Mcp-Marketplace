@@ -2,6 +2,7 @@
 
 import { client } from "@/lib/prisma"
 import { getFreshOutboundToken } from "@/lib/tool-crypto"
+import { decryptSecret } from "@/lib/tool-crypto"
 import { createHash } from "crypto"
 import { NextRequest } from "next/server"
 
@@ -13,6 +14,7 @@ type OutboundInstallInfo = {
     oauthAccessToken: string | null
     oauthRefreshToken: string | null
     oauthExpiresAt: Date | null
+    apiKeyEncrypted: string | null
 } | null
 
 async function proxy(req: NextRequest, { params }: { params: Promise<{ workspaceSlug: string; toolSlug: string }> }) {
@@ -27,6 +29,8 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ workspace
             oauthClientId: true,
             oauthClientSecretEnvKey: true,
             oauthClientSecretEncrypted: true,
+            usesApiKey: true,
+            apiKeyHeaderName: true,
             versions: {
                 where: { status: "PUBLISHED" },
                 orderBy: { createdAt: "desc" },
@@ -77,7 +81,7 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ workspace
     if (publishedVersionId) {
         outboundInstall = await client.installRecord.findUnique({
             where: { workspaceId_toolVersionId: { workspaceId: mcpToken.workspaceId, toolVersionId: publishedVersionId } },
-            select: { id: true, oauthAccessToken: true, oauthRefreshToken: true, oauthExpiresAt: true },
+            select: { id: true, oauthAccessToken: true, oauthRefreshToken: true, oauthExpiresAt: true, apiKeyEncrypted: true },
         })
         // A valid OAuth token with no matching InstallRecord is still a
         // valid CALLER — just means situation A (outbound token) has
@@ -102,6 +106,23 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ workspace
             )
         }
         outboundHeader = ["X-Upstream-Token", outboundToken]
+    }
+
+    // --- situation A2: same idea, but for a static-API-key tool ---
+    // (e.g. ElevenLabs) instead of an OAuth-connected one. Mutually
+    // exclusive with situation A in practice — a tool is either
+    // requiresAuth (OAuth) or usesApiKey, not both.
+    if (tool.usesApiKey) {
+        if (!outboundInstall?.apiKeyEncrypted) {
+            return Response.json(
+                { error: "reauthorization_required", message: "This workspace hasn't connected an API key for this tool yet." },
+                { status: 401 }
+            )
+        }
+        const apiKey = decryptSecret(outboundInstall.apiKeyEncrypted)
+        const headerName = tool.apiKeyHeaderName || "Authorization"
+        const headerValue = headerName.toLowerCase() === "authorization" ? `Bearer ${apiKey}` : apiKey
+        outboundHeader = [headerName, headerValue]
     }
 
     // --- proxy the request through to Railway's internal domain ---

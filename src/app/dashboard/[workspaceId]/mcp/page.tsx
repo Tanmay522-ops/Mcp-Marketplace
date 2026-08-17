@@ -1,3 +1,5 @@
+import React from 'react'
+
 import { getWorkspaceInstalls } from '@/actions/install'
 
 import McpServersTable from './_components/mcp-server-table'

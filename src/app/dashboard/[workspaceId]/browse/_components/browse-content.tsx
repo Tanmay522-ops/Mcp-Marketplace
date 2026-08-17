@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Search, Plus, Package, Loader2, Check } from 'lucide-react'
@@ -20,10 +20,29 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
     const [installError, setInstallError] = useState<string | null>(null)
     const [isDeployOpen, setIsDeployOpen] = useState(false)
 
+    // Same guard as tool-detail-content.tsx's handleRemove — router.push
+    // isn't tied to this component's lifecycle, so a slow installTool
+    // call finishing after the user has already navigated away (and
+    // maybe come BACK to this same Browse page) would otherwise still
+    // fire its navigation, hijacking whatever's on screen by then.
+    const isMountedRef = useRef(true)
+    useEffect(() => {
+        isMountedRef.current = true
+        return () => {
+            isMountedRef.current = false
+        }
+    }, [])
+
     const { data: result } = useQuery({
         queryKey: ['marketplace-tools', workspaceId, query],
         queryFn: () => searchMarketplaceTools(workspaceId, query || undefined),
         initialData: query ? undefined : { status: 200 as const, data: { tools: initialTools } },
+        // Same staleness issue as the tool detail page: without this,
+        // navigating back to Browse after removing a tool elsewhere can
+        // show stale cached/initial data (still showing "Manage" instead
+        // of "Add") until a hard reload. Forces a real fetch on every
+        // mount instead of trusting whatever's cached or handed down.
+        refetchOnMount: 'always',
     })
 
     const tools = result?.status === 200 ? result.data?.tools ?? [] : []
@@ -39,6 +58,13 @@ const BrowseContent = ({ workspaceId, initialTools }: Props) => {
         setInstallingId(toolVersionId)
         setInstallError(null)
         const res = await installTool({ workspaceId, toolVersionId })
+
+        // If the user has navigated away from THIS Browse page instance
+        // while installTool was still in flight (e.g. went elsewhere and
+        // came back to a fresh instance of this same page), don't act on
+        // a result that's no longer relevant to what's on screen now.
+        if (!isMountedRef.current) return
+
         setInstallingId(null)
 
         if (res.status !== 201 || !res.data) {

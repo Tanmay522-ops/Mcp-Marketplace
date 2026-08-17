@@ -92,8 +92,12 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: ctx.error.message }, { status: ctx.error.status })
     }
 
-    const tool = await client.tool.findFirst({ where: { id: toolId, workspaceId } })
-    if (!tool) {
+    // Same bug class already fixed in getToolDetail/uninstallTool/authorize
+    // — the Tool lookup must not require the completing workspace to own
+    // the tool, since finishing OAuth for an installed-but-not-owned
+    // marketplace tool is exactly the normal case, not an edge case.
+    const tool = await client.tool.findUnique({ where: { id: toolId } })
+    if (!tool || (tool.workspaceId !== workspaceId && tool.visibility !== "PUBLIC")) {
         return NextResponse.json({ error: "Tool not found" }, { status: 404 })
     }
     const listUrl = new URL(`/dashboard/${workspaceId}/mcp`, req.nextUrl.origin)

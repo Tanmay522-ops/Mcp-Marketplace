@@ -1,14 +1,13 @@
 "use client"
 
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 
 import { createPortal } from 'react-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { X, Loader2, CheckCircle2, XCircle, Package as PackageIcon, Boxes, AlertTriangle, ArrowRight, Plus, Trash2 } from 'lucide-react'
+import { X, Loader2, PackageIcon, Boxes, AlertTriangle, ArrowRight, Plus, Trash2 } from 'lucide-react'
 import { GitHubIcon } from '@/components/ui/GithubIcon'
 import {
     deployCustomTool,
-    pollDeploymentStatus,
     detectToolVariables,
     detectStartCommand,
     detectDefaultBranch,
@@ -16,7 +15,6 @@ import {
     checkDeployability,
     DetectedVariable,
 } from '@/actions/deploy'
-import { deploymentStatusDisplay } from '@/lib/deployment-status'
 import { useMounted } from '@/hooks/use-mouneted'
 
 type Props = {
@@ -26,13 +24,11 @@ type Props = {
 }
 
 type Source = 'github' | 'npm' | 'pypi' | 'docker'
-type Step = 'form' | 'configure' | 'progress'
+type Step = 'form' | 'configure'
 type VariableRow = { key: string; value: string; required: boolean; hint?: string }
 
-const POLL_TIMEOUT_MS = 10 * 60 * 1000
-
 const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
-    const queryClient = useQueryClient()
+    const router = useRouter()
     const [step, setStep] = useState<Step>('form')
     const [source, setSource] = useState<Source>('github')
     const [repoVisibility, setRepoVisibility] = useState<'public' | 'private'>('public')
@@ -47,52 +43,34 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
     const [error, setError] = useState<string | null>(null)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [isDetecting, setIsDetecting] = useState(false)
-    const [deploymentId, setDeploymentId] = useState<string | null>(null)
     const [variables, setVariables] = useState<VariableRow[]>([])
     const [startCommand, setStartCommand] = useState('')
     const [startCommandSource, setStartCommandSource] = useState<string | null>(null)
-    const [pollTimedOut, setPollTimedOut] = useState(false)
     // Non-blocking — the deployability check is a heuristic (a fixed list of
     // marker files), not exhaustive of every language Railpack supports. A
     // false negative shouldn't stop a real deploy, so this only warns.
     const [deployabilityWarning, setDeployabilityWarning] = useState(false)
 
-    const timedOutRef = useRef(false)
+    // FIXED (audit item): this panel is rendered unconditionally by its
+    // parent (visibility gated only by an early `return null` below, not
+    // by unmounting), so it was actually reachable to fully unmount while
+    // a submitted deploy was still in flight — e.g. the user navigates
+    // away from Browse entirely before deployCustomTool resolves. Without
+    // this guard, a late-resolving success would still fire reset() +
+    // onClose() + router.push(...) against a component (and a user) no
+    // longer there to receive it, yanking them to the new tool's page
+    // from wherever they've since navigated. Same bug class already
+    // fixed on handleRemove/handleInstall elsewhere in this codebase,
+    // just missing here.
+    const isMountedRef = useRef(true)
+    useEffect(() => {
+        isMountedRef.current = true
+        return () => {
+            isMountedRef.current = false
+        }
+    }, [])
 
     const mounted = useMounted()
-
-    useEffect(() => {
-        // Resets on every step/deploymentId change, then subscribes to a
-        // fresh timer for that specific deploy — this is the "reset, then
-        // subscribe to an external system" case the rule's own docs excuse,
-        // not the derived-state anti-pattern it's meant to catch. Safe to
-        // suppress rather than restructure and risk changing this timer's
-        // actual behavior.
-        timedOutRef.current = false
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setPollTimedOut(false)
-        if (step !== 'progress' || !deploymentId) return
-        const timer = setTimeout(() => {
-            timedOutRef.current = true
-            setPollTimedOut(true)
-        }, POLL_TIMEOUT_MS)
-        return () => clearTimeout(timer)
-    }, [step, deploymentId])
-
-    const { data: result } = useQuery({
-        queryKey: ['deployment-status', deploymentId],
-        queryFn: () => pollDeploymentStatus(deploymentId!),
-        enabled: !!deploymentId && step === 'progress',
-        refetchInterval: (query) => {
-            const status = query.state.data?.status === 200 ? query.state.data.data?.status : undefined
-            if (status === 'RUNNING' || status === 'ERROR') return false
-            if (timedOutRef.current) return false
-            return 3000
-        },
-    })
-
-    const deployment = result?.status === 200 ? result.data : null
-    const unrecognizedRailwayStatus = result?.status === 200 ? result.unrecognizedRailwayStatus : null
 
     if (!open || !mounted) return null
 
@@ -118,19 +96,13 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
         setRootDirectory('')
         setResolvedRepoUrl(null)
         setError(null)
-        setDeploymentId(null)
         setVariables([])
         setStartCommand('')
         setStartCommandSource(null)
-        setPollTimedOut(false)
         setDeployabilityWarning(false)
-        timedOutRef.current = false
     }
 
     const handleClose = () => {
-        if (deployment?.status === 'RUNNING' || deployment?.status === 'ERROR') {
-            queryClient.invalidateQueries({ queryKey: ['workspace-installs', workspaceId] })
-        }
         reset()
         onClose()
     }
@@ -291,6 +263,13 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
                     startCommand: startCommand.trim() || undefined,
                 }
         )
+
+        // FIXED (audit item): bail out here if this component has since
+        // unmounted — see the isMountedRef comment above for why. Placed
+        // right after the await, before touching state or navigating,
+        // same pattern as handleRemove/handleInstall elsewhere.
+        if (!isMountedRef.current) return
+
         setIsSubmitting(false)
 
         if (res.status !== 201 || !res.data) {
@@ -298,12 +277,17 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
             return
         }
 
-        setDeploymentId(res.data.deploymentId)
-        setStep('progress')
+        // The panel's job ends here — deployment progress (building,
+        // deploying, running, or error) now lives entirely on the tool's
+        // own detail page, which owns the actual Railway status polling.
+        // Was previously shown inline in this panel via its own polling
+        // loop; moved out so status is visible (and kept up to date) from
+        // that page too, not just while this panel happens to be open.
+        const toolId = res.data.toolId
+        reset()
+        onClose()
+        router.push(`/dashboard/${workspaceId}/mcp/${toolId}`)
     }
-
-    const currentStatus = deployment?.status ?? 'PENDING'
-    const isResolved = currentStatus === 'RUNNING' || currentStatus === 'ERROR'
 
     const sourceTabs: { id: Source; label: string; icon: React.ElementType; enabled: boolean }[] = [
         { id: 'github', label: 'GitHub', icon: GitHubIcon, enabled: true },
@@ -312,7 +296,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
         { id: 'docker', label: 'Docker', icon: Boxes, enabled: true },
     ]
 
-    const stepTitle = step === 'form' ? 'Deploy custom MCP' : step === 'configure' ? 'Configure' : serverName
+    const stepTitle = step === 'form' ? 'Deploy custom MCP' : 'Configure'
 
     const panel = (
         <div className="fixed inset-0 z-[60]">
@@ -612,51 +596,6 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
                             {error && <p className="text-[12px] text-red-500 mt-4">{error}</p>}
                         </>
                     )}
-
-                    {step === 'progress' && (
-                        <div className="flex flex-col items-center py-6">
-                            <div
-                                className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 ${currentStatus === 'ERROR' ? 'bg-red-500/10' : 'bg-black/5 dark:bg-white/5'
-                                    }`}
-                            >
-                                {isResolved ? (
-                                    currentStatus === 'RUNNING' ? (
-                                        <CheckCircle2 className="w-6 h-6 text-emerald-500" strokeWidth={1.5} />
-                                    ) : (
-                                        <XCircle className="w-6 h-6 text-red-500" strokeWidth={1.5} />
-                                    )
-                                ) : (
-                                    <Loader2 className="w-6 h-6 animate-spin text-blue-500" strokeWidth={1.5} />
-                                )}
-                            </div>
-                            <p className="text-[13px] font-medium text-foreground">
-                                {deploymentStatusDisplay[currentStatus as keyof typeof deploymentStatusDisplay]?.label ?? currentStatus}
-                            </p>
-                            {currentStatus === 'ERROR' && deployment?.errorMessage && (
-                                <p className="text-[12px] text-red-500 mt-3 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2 text-center">
-                                    {deployment.errorMessage}
-                                </p>
-                            )}
-                            {currentStatus === 'RUNNING' && (
-                                <p className="text-[12px] text-muted-foreground mt-4 text-center max-w-sm">
-                                    Deployed. Connect an MCP client via the &quot;Connect&quot; button on this tool&apos;s page —
-                                    it&apos;ll walk you through logging in, no key to copy.
-                                </p>
-                            )}
-                            {!isResolved && unrecognizedRailwayStatus && (
-                                <p className="text-[11.5px] text-muted-foreground mt-2 text-center">
-                                    Railway reports: <span className="font-mono">{unrecognizedRailwayStatus}</span> — this
-                                    may still be progressing normally even though the label above hasn&apos;t updated.
-                                </p>
-                            )}
-                            {!isResolved && pollTimedOut && (
-                                <p className="text-[12px] text-amber-500 mt-3 bg-amber-500/5 border border-amber-500/20 rounded-md px-3 py-2 text-center">
-                                    Still deploying on Railway — this is taking longer than expected. It may finish
-                                    on its own; check back on the MCP Servers list later.
-                                </p>
-                            )}
-                        </div>
-                    )}
                 </div>
 
                 <div className="px-5 py-4 border-t border-border/50 flex gap-2 shrink-0">
@@ -664,7 +603,7 @@ const DeployPanel = ({ workspaceId, open, onClose }: Props) => {
                         onClick={step === 'configure' ? () => setStep('form') : handleClose}
                         className="flex-1 h-9 rounded-md border border-border/50 text-[13px] font-medium text-foreground/80 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                     >
-                        {step === 'form' ? 'Cancel' : step === 'configure' ? 'Back' : isResolved ? 'Done' : 'Run in background'}
+                        {step === 'form' ? 'Cancel' : 'Back'}
                     </button>
 
                     {step === 'form' && (

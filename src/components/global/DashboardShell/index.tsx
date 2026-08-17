@@ -58,7 +58,9 @@ const DashboardShell = ({ activeWorkspaceId, workspaces, children }: Props) => {
                     onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
                     onOpenSearch={() => setIsSearchOpen(true)}
                 />
-                <div className="flex-1 overflow-y-auto">{children}</div>
+                <div className="flex-1 overflow-y-auto">
+                    <div className="max-w-[90rem] mx-auto">{children}</div>
+                </div>
             </div>
 
             <SearchModal open={isSearchOpen} onClose={() => setIsSearchOpen(false)} />

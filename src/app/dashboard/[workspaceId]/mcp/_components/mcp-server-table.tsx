@@ -31,6 +31,7 @@ const McpServersTable = ({ workspaceId, initialInstalls }: Props) => {
         queryKey: ['workspace-installs', workspaceId],
         queryFn: () => getWorkspaceInstalls(workspaceId),
         initialData: { status: 200 as const, data: { installs: initialInstalls } },
+        refetchOnMount: 'always',
     })
 
     const allInstalls = result?.status === 200 ? result.data?.installs ?? [] : []

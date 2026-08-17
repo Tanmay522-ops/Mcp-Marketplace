@@ -1,6 +1,7 @@
 "use server"
 
 import { client } from "@/lib/prisma"
+import { buildToolEndpoint } from "@/lib/tool-endpoint"
 import { getCallerContext } from "@/hooks/useCallerContext"
 import {
     railwayRequest,
@@ -762,16 +763,16 @@ export const pollDeploymentStatus = async (deploymentId: string) => {
                     select: { workspaceId: true, slug: true, workspace: { select: { slug: true } } },
                 })
 
-                const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_BASE_URL
-                if (!gatewayBase) {
-                    console.warn(
-                        "pollDeploymentStatus: NEXT_PUBLIC_GATEWAY_BASE_URL is not set — falling back to the raw Railway domain, which the gateway proxy will NOT route through workspace/tool slugs."
-                    )
+                let publicEndpoint: string
+                if (tool) {
+                    const gatewayResult = buildToolEndpoint(tool.workspace.slug, tool.slug, updated.railwayDomain)
+                    if (!gatewayResult.usedGatewayBase) {
+                        console.warn(gatewayResult.warning)
+                    }
+                    publicEndpoint = gatewayResult.endpoint
+                } else {
+                    publicEndpoint = `https://${updated.railwayDomain}`
                 }
-                const publicEndpoint =
-                    tool && gatewayBase
-                        ? `${gatewayBase}/${tool.workspace.slug}/${tool.slug}/mcp`
-                        : `https://${updated.railwayDomain}`
 
                 const newVersion = await client.toolVersion.create({
                     data: {
