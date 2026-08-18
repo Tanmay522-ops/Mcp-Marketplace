@@ -359,7 +359,7 @@ const ToolDetailContent = ({ workspaceId, toolId, initialTool }: Props) => {
         )
     }
 
-    const tabs: TabKey[] = isCustom ? ['overview', 'variables', 'tools', 'logs'] : ['overview', 'tools', 'logs']
+    const tabs: TabKey[] = tool.usesApiKey ? ['overview', 'variables', 'tools', 'logs'] : ['overview', 'tools', 'logs']
 
     // "Fully connected" means different things depending on tool type:
     // an OAuth/API-key tool is done once its install status reaches
@@ -450,6 +450,8 @@ const ToolDetailContent = ({ workspaceId, toolId, initialTool }: Props) => {
                     overview={overviewData}
                     showConnectBanner={variant === 'active' && !bannerDismissed}
                     onDismissConnectBanner={() => setBannerDismissed(true)}
+                    workspaceId={workspaceId}
+                    toolVersionId={tool.version?.id}
                 />
             )}
         </div>

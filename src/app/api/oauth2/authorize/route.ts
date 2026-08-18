@@ -72,23 +72,27 @@ export async function GET(req: NextRequest) {
     // codebase uses, rather than inventing a separate session check here.
     const ctx = await getCallerContext(tool.workspaceId)
     if (ctx.error) {
-        // FIXED: was `new URL("/login", ...)` — that route doesn't exist
-        // anywhere in this app (sign-in is modal-based, triggered from
-        // the home page, not a dedicated page route). Redirecting there
-        // was a genuine dead end — a 404 for anyone hitting an external
-        // MCP client's auth flow while signed out.
-        //
-        // Sending to "/" with redirect_to preserved, same as before —
-        // but this assumes the home page/root layout actually reads
-        // redirect_to and opens the sign-in modal + redirects onward
-        // after a successful login. CONFIRM THIS ASSUMPTION: if the home
-        // page doesn't already do that, this redirect still dead-ends
-        // (silently, not as a 404 — arguably worse, since it looks like
-        // it worked). If there's a different real entry point for
-        // triggering sign-in in this app, swap the path below for that
-        // instead.
-        const loginUrl = new URL("/", req.nextUrl.origin)
-        loginUrl.searchParams.set("redirect_to", req.nextUrl.toString())
+        // FIXED: was `new URL("/", req.nextUrl.origin)` — req.nextUrl.origin
+        // is unreliable behind a tunnel like ngrok (it was resolving to
+        // "https://localhost:3000", an origin that doesn't correspond to
+        // anything reachable — https scheme from ngrok's forwarded-proto
+        // header, but localhost:3000 for the host). Every other
+        // discovery/metadata route in this app sidesteps this by building
+        // URLs from NEXT_PUBLIC_GATEWAY_BASE_URL directly instead of
+        // trusting the incoming request's own origin — matching that here.
+        const base = process.env.NEXT_PUBLIC_GATEWAY_BASE_URL
+        if (!base) {
+            return Response.json({ error: "server_error", message: "NEXT_PUBLIC_GATEWAY_BASE_URL is not configured" }, { status: 500 })
+        }
+        const loginUrl = new URL("/", base)
+        // FIXED: was `req.nextUrl.toString()` — same broken-origin problem
+        // as loginUrl itself had (see above). This is the value that
+        // matters even more: whatever reads `redirect_to` after sign-in
+        // sends the browser here next, so if THIS is still built from the
+        // unreliable req.nextUrl origin, the user hits the same broken
+        // localhost link post-login instead of continuing the OAuth flow.
+        const preservedRequestUrl = new URL(req.nextUrl.pathname + req.nextUrl.search, base)
+        loginUrl.searchParams.set("redirect_to", preservedRequestUrl.toString())
         return NextResponse.redirect(loginUrl)
     }
 
@@ -103,7 +107,12 @@ export async function GET(req: NextRequest) {
         toolId: tool.id,
     })
 
-    const consentUrl = new URL("/oauth2/consent", req.nextUrl.origin)
+    // Same fix as the login redirect above — don't trust req.nextUrl.origin.
+    const base = process.env.NEXT_PUBLIC_GATEWAY_BASE_URL
+    if (!base) {
+        return Response.json({ error: "server_error", message: "NEXT_PUBLIC_GATEWAY_BASE_URL is not configured" }, { status: 500 })
+    }
+    const consentUrl = new URL("/oauth2/consent", base)
     consentUrl.searchParams.set("request", pendingRequestToken)
     return NextResponse.redirect(consentUrl)
 }

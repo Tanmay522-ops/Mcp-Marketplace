@@ -1,55 +1,70 @@
-// scripts/update-elevenlabs-endpoint.ts
+// One-off script — updates the stored `endpoint` on a ToolVersion row.
 //
-// Fixes the endpoint on an already-existing ElevenLabs ToolVersion row —
-// computed via the same shared formula real custom deploys use, instead
-// of the hardcoded placeholder the original seed script used before it
-// was updated. Run once:
+// Why this is needed: tool-detail-content.tsx does
+//   const endpoint = tool.version?.endpoint ?? (endpointResult.endpoint || null)
+// so if ToolVersion.endpoint already has ANY value (true for any tool
+// that was seeded directly, like ElevenLabs), that stored value always
+// wins — buildToolEndpoint()'s freshly-computed URL (from
+// NEXT_PUBLIC_GATEWAY_BASE_URL) never gets used. Changing the env var
+// alone does nothing for a tool in this state; the stored row has to be
+// updated directly, every time your public URL changes (e.g. a new
+// ngrok session).
 //
-//   npx tsx scripts/update-elevenlabs-endpoint.ts
-
-process.loadEnvFile()
+// Run with: npx tsx scripts/update-tool-endpoint.ts
 
 import { PrismaClient } from "@prisma/client"
-import { buildToolEndpoint } from "../src/lib/tool-endpoint"
 
 const client = new PrismaClient()
 
+// --- edit these two before running ---
+const TOOL_SLUG_CONTAINS = "elevenlabs"
+const NEW_GATEWAY_BASE_URL = "https://unpluralistic-unabasing-inocencia.ngrok-free.dev"
+// --------------------------------------
+
 async function main() {
-    const tool = await client.tool.findUnique({
-        where: { slug: "elevenlabs" },
-        include: { workspace: { select: { slug: true } } },
+    const tool = await client.tool.findFirst({
+        where: { slug: { contains: TOOL_SLUG_CONTAINS, mode: "insensitive" } },
+        select: {
+            id: true,
+            name: true,
+            slug: true,
+            workspace: { select: { slug: true } },
+        },
     })
+
     if (!tool) {
-        throw new Error('No tool with slug "elevenlabs" found — run seed-elevenlabs.ts first.')
+        console.error(`No tool found matching slug "${TOOL_SLUG_CONTAINS}".`)
+        process.exit(1)
     }
 
     const version = await client.toolVersion.findFirst({
         where: { toolId: tool.id },
         orderBy: { createdAt: "desc" },
+        select: { id: true, version: true, endpoint: true },
     })
+
     if (!version) {
-        throw new Error("ElevenLabs tool has no version to update.")
+        console.error(`Tool "${tool.name}" has no ToolVersion rows.`)
+        process.exit(1)
     }
 
-    const result = buildToolEndpoint(tool.workspace.slug, tool.slug)
-    if (!result.usedGatewayBase) {
-        console.warn(result.warning)
-        throw new Error("NEXT_PUBLIC_GATEWAY_BASE_URL is not set in .env — can't compute a real endpoint.")
-    }
+    const newEndpoint = `${NEW_GATEWAY_BASE_URL}/${tool.workspace.slug}/${tool.slug}/mcp`
+
+    console.log(`Tool: ${tool.name} (${tool.workspace.slug}/${tool.slug})`)
+    console.log(`Old endpoint: ${version.endpoint}`)
+    console.log(`New endpoint: ${newEndpoint}`)
 
     await client.toolVersion.update({
         where: { id: version.id },
-        data: { endpoint: result.endpoint },
+        data: { endpoint: newEndpoint },
     })
 
-    console.log(`Updated ElevenLabs endpoint to: ${result.endpoint}`)
+    console.log("✓ Updated.")
 }
 
 main()
-    .catch((error) => {
-        console.error(error)
-        process.exitCode = 1
+    .catch((err) => {
+        console.error(err)
+        process.exit(1)
     })
-    .finally(async () => {
-        await client.$disconnect()
-    })
+    .finally(() => client.$disconnect())

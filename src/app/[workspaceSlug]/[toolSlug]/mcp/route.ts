@@ -51,7 +51,14 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ workspace
         // follows this to find out how to actually log in (Way 2). Way 1
         // (the static per-install key) has been fully retired — this is
         // now the only path in.
-        const resourceMetadataUrl = `${req.nextUrl.origin}/${workspaceSlug}/${toolSlug}/.well-known/oauth-protected-resource`
+        //
+        // FIXED: was `${origin}/${workspaceSlug}/${toolSlug}/.well-known/oauth-protected-resource`
+        // — RFC 9728 requires .well-known/<name> to sit right after the
+        // domain, with the resource path appended after, not the other
+        // way around. That mismatch was causing every real client
+        // (Claude included) to 404 while trying to discover this tool's
+        // auth metadata, before OAuth ever got a chance to start.
+        const resourceMetadataUrl = `${req.nextUrl.origin}/.well-known/oauth-protected-resource/${workspaceSlug}/${toolSlug}/mcp`
         return Response.json(
             { error: "unauthorized", message },
             { status: 401, headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` } }
@@ -125,11 +132,46 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ workspace
         outboundHeader = [headerName, headerValue]
     }
 
+    // --- situation A3: this workspace's saved ToolVariable values (e.g.
+    // ELEVENLABS_DEFAULT_VOICE_ID) — only relevant for usesApiKey tools,
+    // since OAuth tools don't get a Variables tab at all. Forwarded as
+    // headers on every request; the upstream server reads them itself.
+    // Was previously saved to the database and never read back out
+    // anywhere — this closes that gap.
+    let variableHeaders: [string, string][] = []
+    if (tool.usesApiKey && publishedVersionId) {
+        const variableValues = await client.toolVariableValue.findMany({
+            where: {
+                workspaceId: mcpToken.workspaceId,
+                toolVariable: { toolVersionId: publishedVersionId },
+            },
+            select: {
+                valueEncrypted: true,
+                toolVariable: { select: { key: true } },
+            },
+        })
+        // Header names can't contain underscores in some HTTP stacks —
+        // converting KEY_LIKE_THIS to X-Key-Like-This to be safe. If
+        // ElevenLabs' actual server expects raw env-var-style names
+        // instead, swap this for `X-${key}` directly.
+        variableHeaders = variableValues.map((v) => {
+            const headerName =
+                "X-" +
+                v.toolVariable.key
+                    .toLowerCase()
+                    .split("_")
+                    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+                    .join("-")
+            return [headerName, decryptSecret(v.valueEncrypted)] as [string, string]
+        })
+    }
+
     // --- proxy the request through to Railway's internal domain ---
     const upstreamUrl = `https://${internalHost}${req.nextUrl.pathname.replace(`/${workspaceSlug}/${toolSlug}/mcp`, "") || ""}${req.nextUrl.search}`
 
     const forwardHeaders = stripHopByHopHeaders(req.headers)
     if (outboundHeader) forwardHeaders.set(outboundHeader[0], outboundHeader[1])
+    for (const [name, value] of variableHeaders) forwardHeaders.set(name, value)
 
     const upstream = await fetch(upstreamUrl, {
         method: req.method,

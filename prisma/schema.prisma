@@ -252,7 +252,7 @@ model ToolVariableValue {
   id             String   @id @default(uuid())
   toolVariableId String
   workspaceId    String
-  value          String
+  valueEncrypted String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   toolVariable   ToolVariable @relation(fields: [toolVariableId], references: [id], onDelete: Cascade)

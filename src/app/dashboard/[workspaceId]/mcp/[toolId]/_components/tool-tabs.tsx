@@ -7,6 +7,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from '@/components/ui/empty'
+import VariablesTab from './variable-tab'
+
 
 export type TabKey = 'overview' | 'variables' | 'tools' | 'logs'
 
@@ -24,9 +26,12 @@ type Props = {
     // cards — not below the tab bar regardless of which tab is open.
     showConnectBanner?: boolean
     onDismissConnectBanner?: () => void
+    // Only needed when 'variables' is in `tabs` (i.e. tool.usesApiKey).
+    workspaceId?: string
+    toolVersionId?: string | null
 }
 
-const ToolTabs = ({ tabs, overview, showConnectBanner, onDismissConnectBanner }: Props) => {
+const ToolTabs = ({ tabs, overview, showConnectBanner, onDismissConnectBanner, workspaceId, toolVersionId }: Props) => {
     const handleCopy = () => {
         if (!overview) return
         navigator.clipboard.writeText(overview.endpoint)
@@ -125,6 +130,8 @@ const ToolTabs = ({ tabs, overview, showConnectBanner, onDismissConnectBanner }:
                                 </div>
                             )}
                         </div>
+                    ) : tab === 'variables' && workspaceId && toolVersionId ? (
+                        <VariablesTab workspaceId={workspaceId} toolVersionId={toolVersionId} />
                     ) : (
                         <div className="py-8" />
                     )}
