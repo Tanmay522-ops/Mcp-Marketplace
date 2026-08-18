@@ -58,7 +58,7 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ workspace
         // way around. That mismatch was causing every real client
         // (Claude included) to 404 while trying to discover this tool's
         // auth metadata, before OAuth ever got a chance to start.
-        const resourceMetadataUrl = `${req.nextUrl.origin}/.well-known/oauth-protected-resource/${workspaceSlug}/${toolSlug}/mcp`
+        const resourceMetadataUrl = `${req.nextUrl.origin}/${workspaceSlug}/${toolSlug}/.well-known/oauth-protected-resource`
         return Response.json(
             { error: "unauthorized", message },
             { status: 401, headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` } }
