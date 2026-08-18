@@ -72,6 +72,16 @@ export async function GET(req: NextRequest) {
     // codebase uses, rather than inventing a separate session check here.
     const ctx = await getCallerContext(tool.workspaceId)
     if (ctx.error) {
+        // TEMPORARY DEBUG — remove once the redirect-loop cause is
+        // confirmed. Prints exactly why getCallerContext rejected this
+        // request: not signed in at all vs. signed in but not a
+        // member/owner of tool.workspaceId (two very different problems
+        // that were producing the identical "back to home" redirect).
+        console.log("OAUTH AUTHORIZE — getCallerContext failed:", {
+            workspaceId: tool.workspaceId,
+            errorStatus: ctx.error.status,
+            errorMessage: ctx.error.message,
+        })
         // FIXED: was `new URL("/", req.nextUrl.origin)` — req.nextUrl.origin
         // is unreliable behind a tunnel like ngrok (it was resolving to
         // "https://localhost:3000", an origin that doesn't correspond to
@@ -96,7 +106,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.redirect(loginUrl)
     }
 
-    const pendingRequestToken = signAuthRequest({
+    const pendingRequestToken: string = signAuthRequest({
         clientId,
         redirectUri,
         codeChallenge,
