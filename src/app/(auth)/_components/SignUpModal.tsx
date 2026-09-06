@@ -22,7 +22,7 @@ export function SignUpModal() {
                     showCloseButton={false}
                     className="sm:max-w-xl p-0 border-none !bg-transparent shadow-none ring-0"
                 >
-                    <SignUpForm onClose={() => setSignUpModalOpen(false)} />
+                    <SignUpForm />
                 </DialogContent>
             </Dialog>
         </>

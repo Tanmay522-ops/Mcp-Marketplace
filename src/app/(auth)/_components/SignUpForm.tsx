@@ -1,6 +1,6 @@
 'use client';
 
-import { useSignUp } from '@clerk/nextjs';
+import { useSignIn, useSignUp } from '@clerk/nextjs';
 import { isClerkAPIResponseError } from '@clerk/nextjs/errors';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -12,9 +12,12 @@ import { Button } from '@/components/ui/button';
 import { OAuthStrategy } from '@clerk/types';
 import GoogleIcon from '@/components/ui/GoogleIcon';
 import { GitHubIcon } from '@/components/ui/GithubIcon';
+import { useMcpStore } from '@/store/useMcpStore';
 
 export default function SignUpForm({ onClose }: { onClose?: () => void }) {
+    const { setSignInModalOpen, setSignUpModalOpen } = useMcpStore();
     const { signUp } = useSignUp();
+    const { signIn } = useSignIn();
     const router = useRouter();
 
     const [emailAddress, setEmailAddress] = useState('');
@@ -57,8 +60,6 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
             setIsLoading(true);
             setErrors({});
 
-
-
             const result = await signUp.password({
                 emailAddress,
                 password,
@@ -73,20 +74,56 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
         } catch (err) {
             if (isClerkAPIResponseError(err) && err.errors.length > 0) {
                 err.errors.forEach((error) => {
+                    // Log every Clerk error here, not just unrecognized ones —
+                    // this is the only way to see the real `code` and
+                    // `longMessage` Clerk sent, since the UI was showing a
+                    // truncated "is invalid" with no way to tell why.
+                    console.error('[handleSubmit] clerk error', {
+                        code: error.code,
+                        message: error.message,
+                        longMessage: error.longMessage,
+                        meta: error.meta,
+                    });
+
                     switch (error.code) {
                         case 'form_password_length_too_short':
                             setErrors((prev) => ({ ...prev, password: 'Password must be at least 8 characters.' }));
                             break;
                         case 'form_password_pwned':
-                            setErrors((prev) => ({ ...prev, password: 'Password is too weak.' }));
+                            setErrors((prev) => ({ ...prev, password: 'This password has appeared in a data breach — please choose a different one.' }));
+                            break;
+                        case 'form_password_not_strong_enough':
+                            setErrors((prev) => ({ ...prev, password: error.longMessage || 'Password is not strong enough.' }));
+                            break;
+                        case 'form_password_size_in_bytes_exceeded':
+                            setErrors((prev) => ({ ...prev, password: 'Password is too long.' }));
                             break;
                         case 'form_identifier_exists':
                             setErrors((prev) => ({ ...prev, email: 'Email already exists.' }));
                             break;
+                        case 'form_param_format_invalid':
+                            // Clerk attaches this to whichever field failed
+                            // format validation — meta.paramName tells us
+                            // which one so we don't have to guess.
+                            if (error.meta?.paramName === 'email_address') {
+                                setErrors((prev) => ({ ...prev, email: error.longMessage || 'Email address is invalid.' }));
+                            } else if (error.meta?.paramName === 'password') {
+                                setErrors((prev) => ({ ...prev, password: error.longMessage || 'Password is invalid.' }));
+                            } else {
+                                setErrors((prev) => ({ ...prev, general: error.longMessage || error.message || 'Invalid input.' }));
+                            }
+                            break;
                         default:
-                            setErrors((prev) => ({ ...prev, general: error.message || 'Authentication failed' }));
+                            // Prefer longMessage — Clerk's `message` field is
+                            // often just the field-level tail (e.g. "is
+                            // invalid") with no context on what "is" refers
+                            // to, which is exactly what was showing up here.
+                            setErrors((prev) => ({ ...prev, general: error.longMessage || error.message || 'Authentication failed' }));
                     }
                 });
+            } else {
+                console.error('[handleSubmit] unexpected error', err);
+                setErrors({ general: 'An unexpected error occurred. Please try again.' });
             }
         } finally {
             setIsLoading(false);
@@ -102,21 +139,34 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
             const verifyResult = await signUp.verifications.verifyEmailCode({ code });
             if (verifyResult.error) throw verifyResult.error;
 
-            const finalizeResult = await signUp.finalize();
-            if (finalizeResult.error) throw finalizeResult.error;
+            if (signUp.status !== 'complete') {
+                setErrors({ general: 'Additional information is needed to finish signing up.' });
+                return;
+            }
 
-            router.push('/callback');
+            const finalizeResult = await signUp.finalize({
+                navigate: () => router.push('/callback'),
+            });
+            if (finalizeResult?.error) throw finalizeResult.error;
         } catch (err) {
             if (isClerkAPIResponseError(err) && err.errors.length > 0) {
                 err.errors.forEach((error) => {
+                    console.error('[handleVerify] clerk error', {
+                        code: error.code,
+                        message: error.message,
+                        longMessage: error.longMessage,
+                    });
                     switch (error.code) {
                         case 'form_code_incorrect':
                             setErrors((prev) => ({ ...prev, general: 'Incorrect verification code' }));
                             break;
                         default:
-                            setErrors((prev) => ({ ...prev, general: error.message || 'Verification failed' }));
+                            setErrors((prev) => ({ ...prev, general: error.longMessage || error.message || 'Verification failed' }));
                     }
                 });
+            } else {
+                console.error('[handleVerify] unexpected error', err);
+                setErrors({ general: 'An unexpected error occurred. Please try again.' });
             }
         } finally {
             setIsVerifying(false);
@@ -134,21 +184,37 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
         }
     };
 
-    const signUpWith = async (
-        strategy: OAuthStrategy
-    ) => {
-        if (!signUp) return;
+    const signUpWith = async (strategy: OAuthStrategy) => {
+        if (!signIn) return;
 
         try {
-            await signUp.sso({
+            // Deliberately signIn.sso() here, not signUp.sso() — this is
+            // Clerk's documented combined sign-in-or-up pattern. It's what
+            // lets /sso-callback's signIn.isTransferable check actually
+            // detect "this is a brand-new user" and create the sign-up via
+            // transfer.
+            const { error } = await signIn.sso({
                 strategy,
-                redirectUrl: "/callback",
-                redirectCallbackUrl: "/callback",
+                redirectCallbackUrl: '/sso-callback',
+                redirectUrl: '/callback',
             });
+
+            if (error) {
+                console.error('[signUpWith] sso() returned error', error);
+                setErrors({ general: 'Could not sign up with this provider. Please try again.' });
+            }
         } catch (err) {
-            console.error(err);
+            console.error('[signUpWith] threw', err);
+            setErrors({ general: 'Could not sign up with this provider. Please try again.' });
         }
     };
+
+
+    const switchToSignIn = () => {
+        setSignUpModalOpen(false);
+        setSignInModalOpen(true);
+    };
+
 
     return (
         <div className="w-full max-w-lg mx-auto rounded-xl bg-background border border-border p-8 relative">
@@ -273,20 +339,23 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
                         <Button
                             type="button"
                             variant="outline"
-                            onClick={() => signUpWith("oauth_github")}
+                            onClick={() => signUpWith('oauth_github')}
                             className="h-11 rounded-xl border-border bg-card text-foreground hover:bg-accent"
                         >
                             <GitHubIcon className="mr-2 h-4 w-4" />
                             Continue with GitHub
                         </Button>
 
-                        <p className="text-center text-xs text-muted-foreground mt-1">
-                            By signing up you agree to our{' '}
-                            <a href="/terms" className="underline hover:text-foreground">
-                                Terms
-                            </a>
-                            .
-                        </p>
+                            <div className="mt-2 text-center text-sm text-muted-foreground">
+                                Already have an account?{' '}
+                                <button
+                                    type="button"
+                                    onClick={switchToSignIn}
+                                    className="font-medium text-[#E8A33D] hover:text-[#E8A33D]/80"
+                                >
+                                    Sign in
+                                </button>
+                            </div>
                     </form>
                 </>
             )}
