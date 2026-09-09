@@ -13,6 +13,11 @@ import { GitHubIcon } from '@/components/ui/GithubIcon';
 import { useMcpStore } from '@/store/useMcpStore';
 import { toast } from 'sonner';
 
+// How long the "Resend code" link stays disabled after a code is sent,
+// in seconds. Reused both for the initial code (sent on submit) and every
+// subsequent resend.
+const RESEND_COOLDOWN_SECONDS = 60;
+
 export default function SignUpForm() {
     const { setSignInModalOpen, setSignUpModalOpen } = useMcpStore();
     const { signUp } = useSignUp();
@@ -30,6 +35,10 @@ export default function SignUpForm() {
     const [isVerifying, setIsVerifying] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
 
+    // Seconds remaining before "Resend code" becomes clickable again.
+    // 0 means the button is enabled.
+    const [resendCooldown, setResendCooldown] = useState(0);
+
     const [errors, setErrors] = useState<{
         email?: string;
         password?: string;
@@ -42,6 +51,18 @@ export default function SignUpForm() {
             router.push('/callback');
         }
     }, [isSignedIn]);
+
+    // Ticks the cooldown down once a second while it's active, and stops
+    // (clears the interval) once it reaches zero or the component unmounts.
+    useEffect(() => {
+        if (resendCooldown <= 0) return;
+
+        const interval = setInterval(() => {
+            setResendCooldown((prev) => (prev <= 1 ? 0 : prev - 1));
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [resendCooldown]);
 
     const validateForm = () => {
         const newErrors: typeof errors = {};
@@ -77,6 +98,10 @@ export default function SignUpForm() {
             if (verificationResult.error) throw verificationResult.error;
 
             setVerifying(true);
+            // The initial code was just sent above — start the same
+            // cooldown here so the user can't immediately hit "Resend"
+            // for a code that was already just sent seconds ago.
+            setResendCooldown(RESEND_COOLDOWN_SECONDS);
         } catch (err) {
             if (isClerkAPIResponseError(err) && err.errors.length > 0) {
                 err.errors.forEach((error) => {
@@ -185,10 +210,16 @@ export default function SignUpForm() {
 
     const handleResendCode = async () => {
         if (!signUp) return;
+        // Extra guard alongside the disabled button — prevents a resend
+        // from firing via some other path (e.g. rapid double-invocation)
+        // while the cooldown is still active.
+        if (resendCooldown > 0) return;
+
         try {
             const resendResult = await signUp.verifications.sendEmailCode();
             if (resendResult.error) throw resendResult.error;
             setSuccessMessage('Verification code resent');
+            setResendCooldown(RESEND_COOLDOWN_SECONDS);
         } catch {
             setErrors({ general: 'Failed to resend verification code.' });
         }
@@ -228,7 +259,7 @@ export default function SignUpForm() {
 
     return (
         <div className="w-full max-w-lg mx-auto rounded-xl bg-background border border-border p-8 relative">
-            
+
             {verifying ? (
                 <>
                     <div className="text-center mb-6">
@@ -265,9 +296,10 @@ export default function SignUpForm() {
                         <button
                             type="button"
                             onClick={handleResendCode}
-                            className="font-medium text-[#E8A33D] hover:text-[#E8A33D]/80"
+                            disabled={resendCooldown > 0}
+                            className="font-medium text-[#E8A33D] hover:text-[#E8A33D]/80 disabled:text-[#9A7B4F] disabled:cursor-not-allowed disabled:hover:text-[#9A7B4F]"
                         >
-                            Resend code
+                            {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
                         </button>
                     </div>
                 </>
@@ -348,16 +380,16 @@ export default function SignUpForm() {
                             Continue with GitHub
                         </Button>
 
-                            <div className="mt-2 text-center text-sm text-muted-foreground">
-                                Already have an account?{' '}
-                                <button
-                                    type="button"
-                                    onClick={switchToSignIn}
-                                    className="font-medium text-[#E8A33D] hover:text-[#E8A33D]/80"
-                                >
-                                    Sign in
-                                </button>
-                            </div>
+                        <div className="mt-2 text-center text-sm text-muted-foreground">
+                            Already have an account?{' '}
+                            <button
+                                type="button"
+                                onClick={switchToSignIn}
+                                className="font-medium text-[#E8A33D] hover:text-[#E8A33D]/80"
+                            >
+                                Sign in
+                            </button>
+                        </div>
                     </form>
                 </>
             )}
