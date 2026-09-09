@@ -1,10 +1,10 @@
 'use client';
 
-import { useClerk, useSignIn } from '@clerk/nextjs';
+import { useSignIn, useUser } from '@clerk/nextjs';
 import { isClerkAPIResponseError } from '@clerk/nextjs/errors';
 import { OAuthStrategy } from '@clerk/types';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -14,12 +14,12 @@ import GoogleIcon from '@/components/ui/GoogleIcon';
 import { GitHubIcon } from '@/components/ui/GithubIcon';
 import { useMcpStore } from '@/store/useMcpStore';
 
+type SecondFactorStrategy = 'totp' | 'phone_code' | 'backup_code' | null;
+
 export default function SignInForm() {
     const { signIn } = useSignIn();
+    const { isSignedIn } = useUser();
     const router = useRouter();
-    // Same bug class as the old /sign-in link in /sso-callback: /sign-up
-    // isn't a real route, sign-up lives in a modal. This was never caught
-    // here until now.
     const { setSignInModalOpen, setSignUpModalOpen } = useMcpStore();
 
     const [emailAddress, setEmailAddress] = useState('');
@@ -32,11 +32,28 @@ export default function SignInForm() {
     const [needsTrustVerification, setNeedsTrustVerification] = useState(false);
     const [trustCode, setTrustCode] = useState('');
 
+    // Set when the account has real MFA enabled (needs_second_factor).
+    // secondFactorStrategy tracks which method we're currently collecting a
+    // code for, so the same screen can offer "use a backup code instead".
+    const [needsSecondFactor, setNeedsSecondFactor] = useState(false);
+    const [secondFactorStrategy, setSecondFactorStrategy] = useState<SecondFactorStrategy>(null);
+    const [secondFactorCode, setSecondFactorCode] = useState('');
+    const [hasBackupCodeOption, setHasBackupCodeOption] = useState(false);
+    const [hasPhoneCodeOption, setHasPhoneCodeOption] = useState(false);
+
     const [errors, setErrors] = useState<{
         email?: string;
         password?: string;
         general?: string;
     }>({});
+
+    useEffect(() => {
+        if (isSignedIn) {
+            setSignInModalOpen(false);
+            router.push('/callback');
+        }
+    }, [isSignedIn]);
+    
 
     const handleClerkError = (err: unknown) => {
         if (isClerkAPIResponseError(err) && err.errors.length > 0) {
@@ -75,8 +92,6 @@ export default function SignInForm() {
                         // Prefer longMessage — Clerk's `message` field is
                         // often just a bare field-level tail (e.g. "is
                         // invalid") with no context on what it refers to.
-                        // This is the exact bug we found and fixed on the
-                        // sign-up form; porting the same fix here.
                         setErrors((prev) => ({ ...prev, general: error.longMessage || error.message || 'Authentication failed.' }));
                 }
             });
@@ -86,8 +101,9 @@ export default function SignInForm() {
         }
     };
 
-    // Runs after signIn.create()/password() or after a trust-verification
-    // code is confirmed. Branches on signIn.status the way Core 3 requires.
+    // Runs after signIn.create()/password(), after a trust-verification code
+    // is confirmed, or after a second-factor code is confirmed. Branches on
+    // signIn.status the way Core 3 requires.
     const resolveSignInStatus = async () => {
         if (!signIn) return;
 
@@ -95,6 +111,7 @@ export default function SignInForm() {
             await signIn.finalize({
                 navigate: () => router.push('/callback'),
             });
+            setSignInModalOpen(false);  
             toast.success('Login successful!');
             return;
         }
@@ -113,7 +130,41 @@ export default function SignInForm() {
         }
 
         if (signIn.status === 'needs_second_factor') {
-            setErrors({ general: 'Two-factor verification is required for this account and is not supported here yet.' });
+            const factors = signIn.supportedSecondFactors ?? [];
+            const totpFactor = factors.find((f) => f.strategy === 'totp');
+            const phoneFactor = factors.find((f) => f.strategy === 'phone_code');
+            const backupFactor = factors.find((f) => f.strategy === 'backup_code');
+
+            setHasBackupCodeOption(!!backupFactor);
+            setHasPhoneCodeOption(!!phoneFactor);
+
+            // Prefer TOTP (no code to send, user reads it off their
+            // authenticator app) — fall back to SMS if that's all this
+            // account has enabled.
+            if (totpFactor) {
+                setSecondFactorStrategy('totp');
+                setNeedsSecondFactor(true);
+                return;
+            }
+
+            if (phoneFactor) {
+                try {
+                    await signIn.mfa.sendPhoneCode();
+                    setSecondFactorStrategy('phone_code');
+                    setNeedsSecondFactor(true);
+                } catch (err) {
+                    handleClerkError(err);
+                }
+                return;
+            }
+
+            if (backupFactor) {
+                setSecondFactorStrategy('backup_code');
+                setNeedsSecondFactor(true);
+                return;
+            }
+
+            setErrors({ general: 'Two-factor verification is required, but no supported method was found.' });
             return;
         }
 
@@ -158,13 +209,44 @@ export default function SignInForm() {
         }
     };
 
-    // NOTE on signOut() below: this call was flagged earlier in debugging as
-    // a possible cause of OAuth buttons silently doing nothing (calling
-    // signOut() with no active session to sign out of can stall before
-    // sso() ever fires). That was never conclusively confirmed for THIS
-    // form specifically, since debugging moved to SignUpForm before this
-    // theory was tested here. If Google/GitHub sign-in via this form is
-    // ever silent with no console output, remove this line first.
+    const handleVerifySecondFactor = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        if (!signIn || !secondFactorStrategy) return;
+        setErrors({});
+        setIsVerifying(true);
+
+        try {
+            let error;
+
+            if (secondFactorStrategy === 'totp') {
+                ({ error } = await signIn.mfa.verifyTOTP({ code: secondFactorCode }));
+            } else if (secondFactorStrategy === 'phone_code') {
+                ({ error } = await signIn.mfa.verifyPhoneCode({ code: secondFactorCode }));
+            } else {
+                ({ error } = await signIn.mfa.verifyBackupCode({ code: secondFactorCode }));
+            }
+
+            if (error) throw error;
+            await resolveSignInStatus();
+        } catch (err) {
+            handleClerkError(err);
+        } finally {
+            setIsVerifying(false);
+        }
+    };
+
+    const switchToBackupCode = () => {
+        setErrors({});
+        setSecondFactorCode('');
+        setSecondFactorStrategy('backup_code');
+    };
+
+    const switchBackToPrimaryFactor = () => {
+        setErrors({});
+        setSecondFactorCode('');
+        setSecondFactorStrategy(hasPhoneCodeOption ? 'phone_code' : 'totp');
+    };
+
     const signInWith = async (strategy: OAuthStrategy) => {
         try {
             if (!signIn) return;
@@ -182,6 +264,68 @@ export default function SignInForm() {
             setErrors({ general: 'Could not start sign in. Please try again.' });
         }
     };
+
+    if (needsSecondFactor) {
+        const isBackupCode = secondFactorStrategy === 'backup_code';
+
+        return (
+            <div className="w-full max-w-lg mx-auto rounded-xl bg-background border border-border p-8 relative">
+                <div className="text-center mb-6">
+                    <h2 className="text-lg font-semibold text-foreground">Two-step verification</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                        {isBackupCode
+                            ? 'Enter one of your backup codes'
+                            : secondFactorStrategy === 'phone_code'
+                                ? 'Enter the code sent to your phone'
+                                : 'Enter the code from your authenticator app'}
+                    </p>
+                </div>
+
+                <form onSubmit={handleVerifySecondFactor} className="flex flex-col gap-4">
+                    <Input
+                        type="text"
+                        value={secondFactorCode}
+                        onChange={(e) => setSecondFactorCode(e.target.value)}
+                        placeholder={isBackupCode ? 'Backup code' : 'Enter 6-digit code'}
+                        maxLength={isBackupCode ? undefined : 6}
+                        className="h-12 text-center text-lg tracking-widest rounded-xl border-border bg-card text-foreground"
+                    />
+
+                    {errors.general && <p className="text-sm text-destructive text-center">{errors.general}</p>}
+
+                    <Button
+                        type="submit"
+                        disabled={isVerifying || secondFactorCode.length === 0}
+                        className="h-11 rounded-xl bg-foreground text-background font-medium hover:bg-foreground/90"
+                    >
+                        {isVerifying ? 'Verifying...' : 'Verify'}
+                    </Button>
+                </form>
+
+                {hasBackupCodeOption && (
+                    <div className="mt-4 text-center text-sm text-muted-foreground">
+                        {isBackupCode ? (
+                            <button
+                                type="button"
+                                onClick={switchBackToPrimaryFactor}
+                                className="font-medium text-[#E8A33D] hover:text-[#E8A33D]/80"
+                            >
+                                {hasPhoneCodeOption ? 'Use your phone code instead' : 'Use your authenticator app instead'}
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={switchToBackupCode}
+                                className="font-medium text-[#E8A33D] hover:text-[#E8A33D]/80"
+                            >
+                                Use a backup code instead
+                            </button>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
 
     if (needsTrustVerification) {
         return (
@@ -298,7 +442,7 @@ export default function SignInForm() {
                     disabled={isLoading}
                     className="h-11 rounded-lg bg-foreground text-background font-medium hover:bg-foreground/90"
                 >
-                    Sign in
+                    {isLoading ? 'Signing in...' : 'Sign in'}
                 </Button>
             </form>
 

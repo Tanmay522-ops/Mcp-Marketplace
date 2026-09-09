@@ -1,11 +1,9 @@
 'use client';
 
-import { useSignIn, useSignUp } from '@clerk/nextjs';
+import { useSignIn, useSignUp, useUser } from '@clerk/nextjs';
 import { isClerkAPIResponseError } from '@clerk/nextjs/errors';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { X } from 'lucide-react';
-
+import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -13,11 +11,13 @@ import { OAuthStrategy } from '@clerk/types';
 import GoogleIcon from '@/components/ui/GoogleIcon';
 import { GitHubIcon } from '@/components/ui/GithubIcon';
 import { useMcpStore } from '@/store/useMcpStore';
+import { toast } from 'sonner';
 
-export default function SignUpForm({ onClose }: { onClose?: () => void }) {
+export default function SignUpForm() {
     const { setSignInModalOpen, setSignUpModalOpen } = useMcpStore();
     const { signUp } = useSignUp();
     const { signIn } = useSignIn();
+    const { isSignedIn } = useUser();
     const router = useRouter();
 
     const [emailAddress, setEmailAddress] = useState('');
@@ -31,11 +31,17 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
     const [successMessage, setSuccessMessage] = useState('');
 
     const [errors, setErrors] = useState<{
-        name?: string;
         email?: string;
         password?: string;
         general?: string;
     }>({});
+
+    useEffect(() => {
+        if (isSignedIn) {
+            setSignUpModalOpen(false);
+            router.push('/callback');
+        }
+    }, [isSignedIn]);
 
     const validateForm = () => {
         const newErrors: typeof errors = {};
@@ -147,7 +153,11 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
             const finalizeResult = await signUp.finalize({
                 navigate: () => router.push('/callback'),
             });
+
             if (finalizeResult?.error) throw finalizeResult.error;
+
+            toast.success('SignUp successful!');
+            return;
         } catch (err) {
             if (isClerkAPIResponseError(err) && err.errors.length > 0) {
                 err.errors.forEach((error) => {
@@ -218,15 +228,7 @@ export default function SignUpForm({ onClose }: { onClose?: () => void }) {
 
     return (
         <div className="w-full max-w-lg mx-auto rounded-xl bg-background border border-border p-8 relative">
-            {onClose && (
-                <button
-                    onClick={onClose}
-                    className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
-                >
-                    <X className="size-4" />
-                </button>
-            )}
-
+            
             {verifying ? (
                 <>
                     <div className="text-center mb-6">

@@ -1,6 +1,6 @@
 "use server"
 
-import { currentUser } from "@clerk/nextjs/server"
+import { clerkClient, currentUser } from "@clerk/nextjs/server"
 import { Prisma } from "@prisma/client"
 import { client } from "@/lib/prisma"
 
@@ -75,10 +75,45 @@ export const onAuthenticateUser = async () => {
         })
 
         if (emailConflict) {
-            return {
-                status: 409,
-                message: "An account with this email already exists. Please sign in with your original method.",
+            let oldClerkUserStillExists = true
+            try {
+                const clerk = await clerkClient()
+                await clerk.users.getUser(emailConflict.clerkId)
+            } catch (err) {
+                const status = (err as { status?: number })?.status
+                if (status === 404) {
+                    oldClerkUserStillExists = false
+                } else {
+                    // Some other failure (network, rate limit, misconfigured key) —
+                    // don't guess the account is deleted. Fail safely by treating
+                    // this as a real conflict rather than risking a bad reclaim.
+                    console.error("onAuthenticateUser: getUser check failed unexpectedly", err)
+                    return {
+                        status: 500,
+                        message: "Could not verify account status. Please try again.",
+                    }
+                }
             }
+
+            if (oldClerkUserStillExists) {
+                return {
+                    status: 409,
+                    message: "An account with this email already exists. Please sign in with your original method.",
+                }
+            }
+
+            const reclaimed = await client.user.update({
+                where: { id: emailConflict.id },
+                data: {
+                    clerkId: authUser.id,
+                    firstName: authUser.firstName,
+                    lastName: authUser.lastName,
+                    imageUrl: authUser.imageUrl,
+                },
+                include: workspaceInclude,
+            })
+
+            return { status: 200, user: reclaimed }
         }
 
         const displayName = deriveDisplayName(authUser.firstName, email)
