@@ -76,7 +76,7 @@ export default function SignInForm() {
                         setErrors((prev) => ({ ...prev, email: 'No account found with this email.' }));
                         break;
                     case 'strategy_for_user_invalid':
-                        setErrors((prev) => ({ ...prev, general: 'This account only supports Google Sign In.' }));
+                        setErrors((prev) => ({ ...prev, general: 'This account only supports Google Sign In. If you want to login set a password from manage account.' }));
                         break;
                     case 'form_code_incorrect':
                         setErrors((prev) => ({ ...prev, general: 'Incorrect verification code.' }));
