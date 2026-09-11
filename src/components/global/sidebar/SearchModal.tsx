@@ -1,7 +1,10 @@
 "use client"
 
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Search, Command, X } from 'lucide-react'
+import { useMounted } from '@/hooks/use-mouneted'
+
 
 type Props = {
     open: boolean
@@ -18,9 +21,15 @@ const SearchModal = ({ open, onClose }: Props) => {
         return () => window.removeEventListener('keydown', handleKeyDown)
     }, [open, onClose])
 
-    if (!open) return null
+    // document isn't available during server rendering, and rendering
+    // this inline (instead of portaled to document.body) risks getting
+    // clipped or mispositioned by an ancestor's overflow/transform styles
+    // — same reasoning as CreateWorkspaceModal.
+    const mounted = useMounted()
 
-    return (
+    if (!open || !mounted) return null
+
+    const modal = (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[8vh] sm:pt-[15vh] bg-background/40 backdrop-blur-sm px-4">
             <div className="absolute inset-0" onClick={onClose} />
             <div className="relative w-full max-w-xl bg-card border border-border/50 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -53,6 +62,8 @@ const SearchModal = ({ open, onClose }: Props) => {
             </div>
         </div>
     )
+
+    return createPortal(modal, document.body)
 }
 
 export default SearchModal

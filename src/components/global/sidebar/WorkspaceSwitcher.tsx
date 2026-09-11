@@ -16,9 +16,15 @@ const WorkspaceSwitcher = ({ workspaces, activeWorkspaceId }: Props) => {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
     const router = useRouter()
 
-    const current = workspaces.find((ws) => ws.id === activeWorkspaceId) ?? workspaces[0]
+    const current = workspaces.find((ws) => ws.id === activeWorkspaceId)
 
-    if (!current) return null
+    if (!current) {
+        console.error('[WorkspaceSwitcher] activeWorkspaceId not found in workspaces list', {
+            activeWorkspaceId,
+            workspaceIds: workspaces.map((ws) => ws.id),
+        })
+        return null
+    }
 
     const ownedWorkspaces = workspaces.filter((ws) => ws.isOwner)
     const memberWorkspaces = workspaces.filter((ws) => !ws.isOwner)
@@ -31,23 +37,27 @@ const WorkspaceSwitcher = ({ workspaces, activeWorkspaceId }: Props) => {
     }
 
     const renderWorkspaceRow = (ws: WorkspaceSummary) => (
-        <div
+        <button
             key={ws.id}
+            type="button"
             onClick={() => handleSelect(ws.id)}
-            className={`px-3 py-2 mx-1 text-[13px] rounded-md cursor-pointer transition-colors truncate ${ws.id === activeWorkspaceId
-                    ? 'bg-primary/10 text-primary font-medium'
-                    : 'text-foreground/80 hover:bg-black/5 dark:hover:bg-white/5'
+            className={`w-full text-left px-3 py-2 mx-1 text-[13px] rounded-md cursor-pointer transition-colors truncate ${ws.id === activeWorkspaceId
+                ? 'bg-primary/10 text-primary font-medium'
+                : 'text-foreground/80 hover:bg-black/5 dark:hover:bg-white/5'
                 }`}
         >
             {ws.name}
-        </div>
+        </button>
     )
 
     return (
         <div className="relative">
-            <div
+            <button
+                type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center justify-between px-2 py-2 mb-4 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors select-none group"
+                aria-expanded={isOpen}
+                aria-haspopup="true"
+                className="w-full flex items-center justify-between px-2 py-2 mb-4 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors select-none group"
             >
                 <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-[6px] bg-primary text-primary-foreground flex items-center justify-center font-semibold text-[13px] shadow-sm overflow-hidden shrink-0">
@@ -68,12 +78,12 @@ const WorkspaceSwitcher = ({ workspaces, activeWorkspaceId }: Props) => {
                     className="w-4 h-4 text-muted-foreground/50 group-hover:text-foreground/70 transition-colors shrink-0"
                     strokeWidth={1.5}
                 />
-            </div>
+            </button>
 
             {isOpen && (
                 <>
                     <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-                    <div className="absolute top-[52px] left-0 w-full bg-card border border-border/50 rounded-lg shadow-xl z-50 py-1 flex flex-col gap-0.5 animate-in fade-in zoom-in-95 duration-100 max-h-[320px] overflow-y-auto">
+                    <div className="absolute top-[52px] left-0 w-full bg-card border border-border/50 rounded-lg shadow-xl z-50 py-1 flex flex-col gap-0.5 animate-in fade-in zoom-in-95 duration-100 max-h-[320px] ">
                         {ownedWorkspaces.length > 0 && (
                             <div className="flex flex-col gap-0.5">
                                 <span className="px-3 pt-1.5 pb-1 text-[10px] font-semibold tracking-wider text-muted-foreground/50 uppercase">
@@ -93,15 +103,16 @@ const WorkspaceSwitcher = ({ workspaces, activeWorkspaceId }: Props) => {
                         )}
 
                         <div className="h-px bg-border/50 my-1 mx-2" />
-                        <div
+                        <button
+                            type="button"
                             onClick={() => {
                                 setIsOpen(false)
                                 setIsCreateModalOpen(true)
                             }}
-                            className="px-3 py-2 mx-1 text-[13px] text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 rounded-md cursor-pointer flex items-center gap-2 transition-colors"
+                            className="w-full text-left px-3 py-2 mx-1 text-[13px] text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 rounded-md cursor-pointer flex items-center gap-2 transition-colors"
                         >
                             <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Create Workspace
-                        </div>
+                        </button>
                     </div>
                 </>
             )}

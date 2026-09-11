@@ -1,7 +1,7 @@
-import { getWorkspaceMembers } from '@/actions/workspace'
+
 import InviteButton from '@/components/global/invite/invite-button'
 import MembersTable from '@/components/global/Members/MembersTable'
-
+import { getWorkspaceMembers } from '@/actions/member'
 
 type Props = {
     params: Promise<{ workspaceId: string }>
@@ -37,7 +37,11 @@ const MembersPage = async ({ params }: Props) => {
                 {canInvite && <InviteButton workspaceId={workspaceId} />}
             </div>
 
-            <MembersTable workspaceId={workspaceId} callerId={callerId} />
+            <MembersTable
+                workspaceId={workspaceId}
+                callerId={callerId}
+                initialData={result.data}
+            />
         </div>
     )
 }

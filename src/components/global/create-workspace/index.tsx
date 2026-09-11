@@ -40,16 +40,22 @@ const CreateWorkspaceModal = ({ open, onClose }: Props) => {
         }
 
         setIsSubmitting(true)
-        const result = await createWorkspace(name.trim())
-        setIsSubmitting(false)
+        try {
+            const result = await createWorkspace(name.trim())
 
-        if (result.status !== 201 || !result.data) {
-            setError(result.message ?? 'Failed to create workspace')
-            return
+            if (result.status !== 201 || !result.data) {
+                setError(result.message ?? 'Failed to create workspace')
+                return
+            }
+
+            handleClose()
+            router.push(`/dashboard/${result.data.id}`)
+        } catch (err) {
+            console.error('[CreateWorkspaceModal] createWorkspace threw', err)
+            setError('Something went wrong. Please try again.')
+        } finally {
+            setIsSubmitting(false)
         }
-
-        handleClose()
-        router.push(`/dashboard/${result.data.id}`)
     }
 
     const handleKeyDown = (e: React.KeyboardEvent) => {

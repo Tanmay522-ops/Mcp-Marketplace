@@ -1,6 +1,7 @@
 "use client"
 
-import { usePathname } from 'next/navigation'
+import { useMemo } from 'react'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react'
 import { UserButton } from '@clerk/nextjs'
 import { getNavGroups, getBottomNavItems, NavItemData } from '../data/data'
@@ -22,12 +23,30 @@ const flattenItems = (items: NavItemData[]): NavItemData[] =>
 
 const Header = ({ workspaceId, workspaceName, isSidebarOpen, onToggleSidebar, onOpenSearch }: Props) => {
     const pathname = usePathname()
+    const searchParams = useSearchParams()
+    const currentQuery = searchParams.toString()
+    const currentPath = currentQuery ? `${pathname}?${currentQuery}` : pathname
 
-    const allItems = [...getNavGroups(workspaceId).flatMap((g) => g.items), ...getBottomNavItems(workspaceId)]
-    const flat = flattenItems(allItems)
+    // Only recomputed when the workspace, path, or query string actually
+    // change — not on every unrelated re-render caused by sidebar/search
+    // state toggling elsewhere in the shell.
+    const activeTitle = useMemo(() => {
+        const allItems = [...getNavGroups(workspaceId).flatMap((g) => g.items), ...getBottomNavItems(workspaceId)]
+        const flat = flattenItems(allItems)
 
-    const activeItem = flat.find((item) => item.href && item.href.split('?')[0] === pathname)
-    const activeTitle = activeItem?.title ?? 'Dashboard'
+        // Try an exact match first (path + query string) — this is what
+        // correctly distinguishes routes like /executions?type=SMOKE_TEST
+        // from /executions?type=TRY_LIVE, which otherwise share the same
+        // base path and would always resolve to whichever one happens to
+        // be listed first.
+        const exactMatch = flat.find((item) => item.href === currentPath)
+        if (exactMatch) return exactMatch.title
+
+        // Fall back to a base-path-only match (ignoring query strings) for
+        // items that don't define a query string at all.
+        const baseMatch = flat.find((item) => item.href && item.href.split('?')[0] === pathname)
+        return baseMatch?.title ?? 'Dashboard'
+    }, [workspaceId, pathname, currentPath])
 
     return (
         <div className="h-14 border-b border-border/50 flex items-center px-3 sm:px-4 justify-between bg-card shrink-0">

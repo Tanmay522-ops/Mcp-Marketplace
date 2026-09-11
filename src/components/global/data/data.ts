@@ -1,3 +1,5 @@
+import type { ElementType } from 'react'
+
 import { GitHubIcon } from '@/components/ui/GithubIcon'
 import {
     LayoutDashboard,
@@ -16,14 +18,13 @@ import {
 export type NavItemData = {
     id: string
     title: string
-    icon: React.ElementType
+    icon: ElementType
     href?: string
     action?: 'open-search'
     badge?: number | string
     shortcut?: string
     children?: NavItemData[]
     hidden?: boolean
-
 }
 
 export type NavGroupData = {
@@ -60,14 +61,14 @@ export const getNavGroups = (workspaceId: string): NavGroupData[] => [
                 title: 'Notifications',
                 icon: Bell,
                 href: `/dashboard/${workspaceId}/notifications`,
-                children:[
+                children: [
                     {
                         id: 'invites',
                         title: 'Invites',
                         icon: Mail,
                         href: `/dashboard/${workspaceId}/invites`,
                     },
-                ]
+                ],
             },
         ],
     },
@@ -79,18 +80,15 @@ export const getNavGroups = (workspaceId: string): NavGroupData[] => [
                 title: 'MCP Server',
                 icon: Package,
                 href: `/dashboard/${workspaceId}/mcp`,
-                children:[
-                   
+                children: [
                     {
-                        
                         id: 'browse',
                         title: 'Browse',
                         icon: Compass,
                         href: `/dashboard/${workspaceId}/browse`,
                         hidden: true,
                     },
-                ]
-              
+                ],
             },
             {
                 id: 'executions',
@@ -112,7 +110,6 @@ export const getNavGroups = (workspaceId: string): NavGroupData[] => [
                     },
                 ],
             },
-         
         ],
     },
     {

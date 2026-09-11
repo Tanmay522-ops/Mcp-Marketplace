@@ -1,28 +1,20 @@
 "use client"
 
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal, Crown, Loader2 } from 'lucide-react'
-import { getWorkspaceMembers } from '@/actions/workspace'
+import { getWorkspaceMembers, removeMember, updateMemberRole } from '@/actions/member'
 
-type MemberRow = {
-    id: string
-    userId: string
-    role: string
-    joinedAt: Date
-    user: {
-        id: string
-        firstName: string | null
-        lastName: string | null
-        email: string
-        imageUrl: string | null
-    }
-}
+type MembersResult = Awaited<ReturnType<typeof getWorkspaceMembers>>
+type MembersData = Extract<MembersResult, { data: unknown }>['data']
+type MemberRow = MembersData['members'][number]
 
 type Props = {
     workspaceId: string
     callerId: string
+    initialData?: MembersData
 }
+
 
 const roleBadgeStyles: Record<string, string> = {
     OWNER: 'bg-primary/10 text-primary',
@@ -30,14 +22,52 @@ const roleBadgeStyles: Record<string, string> = {
     MEMBER: 'bg-black/5 dark:bg-white/10 text-muted-foreground',
 }
 
-const MembersTable = ({ workspaceId, callerId }: Props) => {
+const MembersTable = ({ workspaceId, callerId, initialData }: Props) => {
     const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+    const [pendingId, setPendingId] = useState<string | null>(null)
+    const menuRef = useRef<HTMLDivElement | null>(null)
+    const queryClient = useQueryClient()
 
-    const { data: result, isLoading } = useQuery({
-        queryKey: ['workspace-members', workspaceId],
+    const queryKey = ['workspace-members', workspaceId]
+
+    const { data: result, isLoading, isError } = useQuery({
+        queryKey,
         queryFn: () => getWorkspaceMembers(workspaceId),
+        initialData: initialData
+            ? (): MembersResult => ({ status: 200, data: initialData })
+            : undefined,
     })
 
+    // Close menu on Escape
+    useEffect(() => {
+        if (!openMenuId) return
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setOpenMenuId(null)
+        }
+        window.addEventListener('keydown', onKeyDown)
+        return () => window.removeEventListener('keydown', onKeyDown)
+    }, [openMenuId])
+
+    const roleMutation = useMutation({
+        mutationFn: ({ memberId, role }: { memberId: string; role: "ADMIN" | "MEMBER" }) =>
+            updateMemberRole(workspaceId, memberId, role),
+        onMutate: ({ memberId }) => setPendingId(memberId),
+        onSettled: () => setPendingId(null),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey })
+            setOpenMenuId(null)
+        },
+    })
+
+    const removeMutation = useMutation({
+        mutationFn: (memberId: string) => removeMember(workspaceId, memberId),
+        onMutate: (memberId) => setPendingId(memberId),
+        onSettled: () => setPendingId(null),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey })
+            setOpenMenuId(null)
+        },
+    })
 
     if (isLoading && !result) {
         return (
@@ -48,7 +78,7 @@ const MembersTable = ({ workspaceId, callerId }: Props) => {
         )
     }
 
-    if (!result || result.status !== 200 || !result.data) {
+    if (isError || !result || result.status !== 200 || !result.data) {
         return (
             <div className="w-full bg-card rounded-xl border border-border/50 shadow-sm p-8 text-center">
                 <p className="text-[13px] text-muted-foreground">
@@ -68,11 +98,12 @@ const MembersTable = ({ workspaceId, callerId }: Props) => {
     }
 
     return (
-        <div className="w-full bg-card rounded-xl border border-border/50 shadow-sm ">
+        <div className="w-full bg-card rounded-xl border border-border/50 shadow-sm">
             <div className="divide-y divide-border/50">
                 {members.map((member) => {
                     const isSelf = member.userId === callerId
                     const isOwnerRow = member.role === 'OWNER'
+                    const isBusy = pendingId === member.id
 
                     return (
                         <div key={member.id} className="flex items-center justify-between px-5 py-3.5 group">
@@ -106,23 +137,41 @@ const MembersTable = ({ workspaceId, callerId }: Props) => {
                                     {member.role}
                                 </span>
 
-                                {canManage && !isOwnerRow && (
-                                    <div className="relative">
+                                {canManage && !isOwnerRow && !isSelf && (
+                                    <div className="relative" ref={openMenuId === member.id ? menuRef : undefined}>
                                         <button
                                             onClick={() => setOpenMenuId(openMenuId === member.id ? null : member.id)}
-                                            className="p-1 rounded-md text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5 hover:text-foreground transition-all"
+                                            disabled={isBusy}
+                                            className="p-1 rounded-md text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5 hover:text-foreground transition-all disabled:opacity-50"
                                         >
-                                            <MoreHorizontal className="w-4 h-4" strokeWidth={1.5} />
+                                            {isBusy ? (
+                                                <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.5} />
+                                            ) : (
+                                                <MoreHorizontal className="w-4 h-4" strokeWidth={1.5} />
+                                            )}
                                         </button>
 
                                         {openMenuId === member.id && (
                                             <>
                                                 <div className="fixed inset-0 z-40" onClick={() => setOpenMenuId(null)} />
                                                 <div className="absolute top-7 right-0 w-40 bg-card border border-border/50 rounded-lg shadow-xl z-50 py-1 flex flex-col">
-                                                    <button className="px-3 py-2 text-[13px] text-left text-foreground/80 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                                                    <button
+                                                        onClick={() =>
+                                                            roleMutation.mutate({
+                                                                memberId: member.id,
+                                                                role: member.role === 'ADMIN' ? 'MEMBER' : 'ADMIN',
+                                                            })
+                                                        }
+                                                        disabled={roleMutation.isPending}
+                                                        className="px-3 py-2 text-[13px] text-left text-foreground/80 hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
+                                                    >
                                                         {member.role === 'ADMIN' ? 'Demote to Member' : 'Promote to Admin'}
                                                     </button>
-                                                    <button className="px-3 py-2 text-[13px] text-left text-red-500 hover:bg-red-500/10 transition-colors">
+                                                    <button
+                                                        onClick={() => removeMutation.mutate(member.id)}
+                                                        disabled={removeMutation.isPending}
+                                                        className="px-3 py-2 text-[13px] text-left text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                                                    >
                                                         Remove from workspace
                                                     </button>
                                                 </div>

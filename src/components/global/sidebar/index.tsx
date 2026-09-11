@@ -1,13 +1,11 @@
 "use client"
 
-import React from 'react'
 import { SignOutButton } from '@clerk/nextjs'
 import { LogOut } from 'lucide-react'
 
 import { getNavGroups, getBottomNavItems, WorkspaceSummary } from '../data/data'
 import WorkspaceSwitcher from './WorkspaceSwitcher'
 import NavItem from './NavItems'
-
 
 type Props = {
     activeWorkspaceId: string
