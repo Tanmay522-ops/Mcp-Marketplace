@@ -1,4 +1,3 @@
-
 import InviteButton from '@/components/global/invite/invite-button'
 import MembersTable from '@/components/global/Members/MembersTable'
 import { getWorkspaceMembers } from '@/actions/member'
@@ -21,7 +20,7 @@ const MembersPage = async ({ params }: Props) => {
             </div>
         )
     }
-
+    
     const { callerId, members, callerRole } = result.data
     const canInvite = callerRole === 'OWNER' || callerRole === 'ADMIN'
 
@@ -42,7 +41,7 @@ const MembersPage = async ({ params }: Props) => {
                 callerId={callerId}
                 initialData={result.data}
             />
-        </div>
+        </div>  
     )
 }
 

@@ -13,10 +13,13 @@ import { Label } from '@/components/ui/label';
 import GoogleIcon from '@/components/ui/GoogleIcon';
 import { GitHubIcon } from '@/components/ui/GithubIcon';
 import { useMcpStore } from '@/store/useMcpStore';
+import { getCallbackUrl, getSsoCallbackPath, rememberRedirect } from '@/lib/safe-redirect';
 
 type SecondFactorStrategy = 'totp' | 'phone_code' | 'backup_code' | null;
 
-export default function SignInForm() {
+type SignInFormProps = { onSwitchToSignUp?: () => void };
+
+export default function SignInForm({ onSwitchToSignUp }: SignInFormProps = {}) {
     const { signIn } = useSignIn();
     const { isSignedIn } = useUser();
     const router = useRouter();
@@ -50,10 +53,10 @@ export default function SignInForm() {
     useEffect(() => {
         if (isSignedIn) {
             setSignInModalOpen(false);
-            router.push('/callback');
+            router.push(getCallbackUrl());
         }
     }, [isSignedIn]);
-    
+
 
     const handleClerkError = (err: unknown) => {
         if (isClerkAPIResponseError(err) && err.errors.length > 0) {
@@ -109,9 +112,9 @@ export default function SignInForm() {
 
         if (signIn.status === 'complete') {
             await signIn.finalize({
-                navigate: () => router.push('/callback'),
+                navigate: () => router.push(getCallbackUrl()),
             });
-            setSignInModalOpen(false);  
+            setSignInModalOpen(false);
             toast.success('Login successful!');
             return;
         }
@@ -250,10 +253,12 @@ export default function SignInForm() {
     const signInWith = async (strategy: OAuthStrategy) => {
         try {
             if (!signIn) return;
+            // Keep the invite redirect across the OAuth round trip.
+            rememberRedirect();
             const { error } = await signIn.sso({
                 strategy,
-                redirectCallbackUrl: '/sso-callback',
-                redirectUrl: '/callback',
+                redirectCallbackUrl: getSsoCallbackPath(),
+                redirectUrl: getCallbackUrl(),
             });
             if (error) {
                 console.error('[signInWith] sso() returned error', error);
@@ -451,6 +456,7 @@ export default function SignInForm() {
                 <button
                     type="button"
                     onClick={() => {
+                        if (onSwitchToSignUp) return onSwitchToSignUp();
                         setSignInModalOpen(false);
                         setSignUpModalOpen(true);
                     }}

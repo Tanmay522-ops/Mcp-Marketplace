@@ -4,10 +4,9 @@ import { useState } from 'react'
 
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { X, Mail, Loader2 } from 'lucide-react'
+import { X, Mail, Loader2, Copy, Check } from 'lucide-react'
 import { getWorkspaceInvites, revokeInvite, sendInvite } from '@/actions/invite'
 import { useMounted } from '@/hooks/use-mouneted'
-
 
 type Props = {
     workspaceId: string
@@ -23,12 +22,13 @@ const InviteModal = ({ workspaceId, open, onClose }: Props) => {
     const [notice, setNotice] = useState<string | null>(null)
     const [isSending, setIsSending] = useState(false)
     const [revokingId, setRevokingId] = useState<string | null>(null)
+    const [revokeError, setRevokeError] = useState<string | null>(null)
+    const [copiedId, setCopiedId] = useState<string | null>(null)
 
     const mounted = useMounted()
 
-    // Only fetch while the modal is actually open — no point holding a
-    // background poll running for a panel nobody's looking at.
-    const { data: result, isLoading } = useQuery({
+    // Only fetch while the modal is actually open.
+    const { data: result, isLoading, isError } = useQuery({
         queryKey: ['workspace-invites', workspaceId],
         queryFn: () => getWorkspaceInvites(workspaceId),
         enabled: open,
@@ -37,11 +37,14 @@ const InviteModal = ({ workspaceId, open, onClose }: Props) => {
     if (!open || !mounted) return null
 
     const invites = result?.status === 200 ? result.data?.invites ?? [] : []
+    const loadFailed = isError || (result !== undefined && result.status !== 200)
 
     const handleClose = () => {
         setEmail('')
         setError(null)
         setNotice(null)
+        setRevokeError(null)
+        setCopiedId(null)
         onClose()
     }
 
@@ -54,33 +57,59 @@ const InviteModal = ({ workspaceId, open, onClose }: Props) => {
         }
 
         setIsSending(true)
-        const res = await sendInvite({ workspaceId, email: email.trim(), role })
-        setIsSending(false)
+        try {
+            const res = await sendInvite({ workspaceId, email: email.trim(), role })
 
-        if (res.status !== 201 || !res.data) {
-            setError(res.message ?? 'Failed to send invite')
-            return
-        }
+            if (res.status !== 201) {
+                setError(res.message ?? 'Failed to send invite')
+                return
+            }
 
-        setEmail('')
-        if (!res.emailSent) {
-            setNotice('Invite created, but the email failed to send — share the link manually.')
+            setEmail('')
+            if (!res.emailSent) {
+                setNotice('Invite created, but the email failed to send — use the copy button below to share the link.')
+            }
+            // Refetch the pending list so the new invite shows up immediately.
+            queryClient.invalidateQueries({ queryKey: ['workspace-invites', workspaceId] })
+        } catch (err) {
+            console.error('sendInvite error:', err)
+            setError('Something went wrong sending the invite. Please try again.')
+        } finally {
+            setIsSending(false)
         }
-        // Refetch the pending list so the new invite shows up immediately.
-        queryClient.invalidateQueries({ queryKey: ['workspace-invites', workspaceId] })
     }
 
     const handleRevoke = async (inviteId: string) => {
+        setRevokeError(null)
         setRevokingId(inviteId)
-        const res = await revokeInvite(workspaceId, inviteId)
-        setRevokingId(null)
-        if (res.status === 200) {
-            queryClient.invalidateQueries({ queryKey: ['workspace-invites', workspaceId] })
+        try {
+            const res = await revokeInvite(workspaceId, inviteId)
+            if (res.status === 200) {
+                queryClient.invalidateQueries({ queryKey: ['workspace-invites', workspaceId] })
+            } else {
+                setRevokeError(res.message ?? 'Failed to revoke invite')
+            }
+        } catch (err) {
+            console.error('revokeInvite error:', err)
+            setRevokeError('Something went wrong revoking the invite. Please try again.')
+        } finally {
+            setRevokingId(null)
+        }
+    }
+
+    const handleCopy = async (inviteId: string) => {
+        try {
+            await navigator.clipboard.writeText(`${window.location.origin}/invite/${inviteId}`)
+            setCopiedId(inviteId)
+            setTimeout(() => setCopiedId((current) => (current === inviteId ? null : current)), 2000)
+        } catch (err) {
+            console.error('copy invite link error:', err)
+            setRevokeError('Could not copy the link. Copy it manually from the address format /invite/<id>.')
         }
     }
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') handleSend()
+        if (e.key === 'Enter' && !isSending) handleSend()
         if (e.key === 'Escape') handleClose()
     }
 
@@ -135,10 +164,17 @@ const InviteModal = ({ workspaceId, open, onClose }: Props) => {
                         Pending invites
                     </span>
 
+                    {revokeError && <p className="text-[12px] text-red-500 mt-2">{revokeError}</p>}
+
                     <div className="mt-2 rounded-lg border border-border/50 overflow-hidden max-h-[220px] overflow-y-auto">
                         {isLoading ? (
                             <div className="flex items-center justify-center py-8 text-muted-foreground">
                                 <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.5} />
+                            </div>
+                        ) : loadFailed ? (
+                            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                                <Mail className="w-5 h-5 mb-1.5 text-muted-foreground/40" strokeWidth={1.5} />
+                                <p className="text-[12px]">Couldn't load invites. Try reopening this panel.</p>
                             </div>
                         ) : invites.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
@@ -148,25 +184,38 @@ const InviteModal = ({ workspaceId, open, onClose }: Props) => {
                         ) : (
                             <div className="divide-y divide-border/50">
                                 {invites.map((invite) => (
-                                    <div key={invite.id} className="flex items-center justify-between px-3 py-2.5">
+                                    <div key={invite.id} className="flex items-center justify-between px-3 py-2.5 gap-2">
                                         <div className="flex flex-col min-w-0">
                                             <span className="text-[12.5px] font-medium text-foreground truncate">{invite.email}</span>
                                             <span className="text-[11px] text-muted-foreground truncate">
                                                 Invited as {invite.role.toLowerCase()}
                                             </span>
                                         </div>
-                                        <button
-                                            onClick={() => handleRevoke(invite.id)}
-                                            disabled={revokingId === invite.id}
-                                            className="p-1 rounded-md text-muted-foreground/60 hover:bg-red-500/10 hover:text-red-500 transition-colors disabled:opacity-50 shrink-0"
-                                            title="Revoke invite"
-                                        >
-                                            {revokingId === invite.id ? (
-                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                            ) : (
-                                                <X className="w-3.5 h-3.5" strokeWidth={1.5} />
-                                            )}
-                                        </button>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            <button
+                                                onClick={() => handleCopy(invite.id)}
+                                                className="p-1 rounded-md text-muted-foreground/60 hover:bg-black/5 dark:hover:bg-white/10 hover:text-foreground transition-colors"
+                                                title="Copy invite link"
+                                            >
+                                                {copiedId === invite.id ? (
+                                                    <Check className="w-3.5 h-3.5 text-green-500" strokeWidth={1.5} />
+                                                ) : (
+                                                    <Copy className="w-3.5 h-3.5" strokeWidth={1.5} />
+                                                )}
+                                            </button>
+                                            <button
+                                                onClick={() => handleRevoke(invite.id)}
+                                                disabled={revokingId === invite.id}
+                                                className="p-1 rounded-md text-muted-foreground/60 hover:bg-red-500/10 hover:text-red-500 transition-colors disabled:opacity-50"
+                                                title="Revoke invite"
+                                            >
+                                                {revokingId === invite.id ? (
+                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                ) : (
+                                                    <X className="w-3.5 h-3.5" strokeWidth={1.5} />
+                                                )}
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -177,10 +226,8 @@ const InviteModal = ({ workspaceId, open, onClose }: Props) => {
         </div>
     )
 
-    // Portal to <body> — same reason as CreateWorkspaceModal: this button
-    // is triggered from deep inside the page tree, and the sidebar's
-    // transformed drawer wrapper would otherwise confine a plain `fixed`
-    // element to its own box instead of the full viewport.
+    // Portal to <body> so the sidebar's transformed drawer wrapper doesn't
+    // confine the `fixed` overlay to its own box.
     return createPortal(modal, document.body)
 }
 

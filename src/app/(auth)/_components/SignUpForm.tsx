@@ -11,6 +11,7 @@ import { OAuthStrategy } from '@clerk/types';
 import GoogleIcon from '@/components/ui/GoogleIcon';
 import { GitHubIcon } from '@/components/ui/GithubIcon';
 import { useMcpStore } from '@/store/useMcpStore';
+import { getCallbackUrl, getSsoCallbackPath, rememberRedirect } from '@/lib/safe-redirect';
 import { toast } from 'sonner';
 
 // How long the "Resend code" link stays disabled after a code is sent,
@@ -18,7 +19,9 @@ import { toast } from 'sonner';
 // subsequent resend.
 const RESEND_COOLDOWN_SECONDS = 60;
 
-export default function SignUpForm() {
+type SignUpFormProps = { onSwitchToSignIn?: () => void };
+
+export default function SignUpForm({ onSwitchToSignIn }: SignUpFormProps = {}) {
     const { setSignInModalOpen, setSignUpModalOpen } = useMcpStore();
     const { signUp } = useSignUp();
     const { signIn } = useSignIn();
@@ -48,7 +51,7 @@ export default function SignUpForm() {
     useEffect(() => {
         if (isSignedIn) {
             setSignUpModalOpen(false);
-            router.push('/callback');
+            router.push(getCallbackUrl());
         }
     }, [isSignedIn]);
 
@@ -176,7 +179,7 @@ export default function SignUpForm() {
             }
 
             const finalizeResult = await signUp.finalize({
-                navigate: () => router.push('/callback'),
+                navigate: () => router.push(getCallbackUrl()),
             });
 
             if (finalizeResult?.error) throw finalizeResult.error;
@@ -234,10 +237,12 @@ export default function SignUpForm() {
             // lets /sso-callback's signIn.isTransferable check actually
             // detect "this is a brand-new user" and create the sign-up via
             // transfer.
+            // Keep the invite redirect across the OAuth round trip.
+            rememberRedirect();
             const { error } = await signIn.sso({
                 strategy,
-                redirectCallbackUrl: '/sso-callback',
-                redirectUrl: '/callback',
+                redirectCallbackUrl: getSsoCallbackPath(),
+                redirectUrl: getCallbackUrl(),
             });
 
             if (error) {
@@ -252,6 +257,7 @@ export default function SignUpForm() {
 
 
     const switchToSignIn = () => {
+        if (onSwitchToSignIn) return onSwitchToSignIn();
         setSignUpModalOpen(false);
         setSignInModalOpen(true);
     };

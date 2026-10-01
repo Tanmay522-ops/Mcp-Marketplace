@@ -364,6 +364,7 @@ model Invite {
   role        WorkspaceRole
   status      InviteStatus @default(PENDING)
   createdAt   DateTime     @default(now())
+  expiresAt   DateTime?
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   sender      User         @relation("InviteSender", fields: [senderId], references: [id])
   receiver    User?        @relation("InviteReceiver", fields: [receiverId], references: [id])

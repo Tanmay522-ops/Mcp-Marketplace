@@ -1,8 +1,9 @@
-import { redirect } from 'next/navigation'
-import { auth } from '@clerk/nextjs/server'
-import InviteResponseButtons from './_components/invite-response-buttons'
-import { getInviteDetails } from '@/actions/invite'
-
+import { redirect } from "next/navigation"
+import { auth } from "@clerk/nextjs/server"
+import InviteResponseButtons from "./_components/invite-response-buttons"
+import SwitchAccountButton from "./_components/switch-account-button"
+import { getInviteDetails } from "@/actions/invite"
+import { onAuthenticateUser } from "@/actions/user"
 
 type Props = {
     params: Promise<{ inviteId: string }>
@@ -10,21 +11,41 @@ type Props = {
 
 const InvitePage = async ({ params }: Props) => {
     const { inviteId } = await params
+    const invitePath = `/invite/${inviteId}`
+    const signInUrl = `/sign-in?redirect_url=${encodeURIComponent(invitePath)}`
 
     const { userId } = await auth()
     if (!userId) {
-        redirect(`/sign-in?redirect_url=/invite/${inviteId}`)
+        redirect(signInUrl)
     }
 
-    const result = await getInviteDetails(inviteId)
-
-    if (result.status !== 200 || !result.data) {
+    // A Clerk session can exist without a DB row (never passed /callback).
+    // acceptInvite needs that row, so make sure it exists.
+    const authResult = await onAuthenticateUser()
+    if (authResult.status !== 200 && authResult.status !== 201) {
         return (
             <div className="flex items-center justify-center min-h-screen px-4">
                 <div className="max-w-sm w-full text-center">
                     <p className="text-[14px] text-muted-foreground">
-                        {result.message ?? 'This invite could not be found.'}
+                        Something went wrong signing you in. Please try again.
                     </p>
+                </div>
+            </div>
+        )
+    }
+
+    const result = await getInviteDetails(inviteId)
+
+    if (result.status !== 200) {
+        const wrongAccount = result.status === 403
+
+        return (
+            <div className="flex items-center justify-center min-h-screen px-4">
+                <div className="max-w-sm w-full text-center flex flex-col items-center gap-4">
+                    <p className="text-[14px] text-muted-foreground">
+                        {result.message ?? "This invite could not be found."}
+                    </p>
+                    {wrongAccount && <SwitchAccountButton redirectUrl={signInUrl} />}
                 </div>
             </div>
         )
@@ -32,7 +53,7 @@ const InvitePage = async ({ params }: Props) => {
 
     const invite = result.data
     const senderName = invite.sender.firstName
-        ? `${invite.sender.firstName} ${invite.sender.lastName ?? ''}`.trim()
+        ? `${invite.sender.firstName} ${invite.sender.lastName ?? ""}`.trim()
         : invite.sender.email
 
     return (
@@ -48,7 +69,7 @@ const InvitePage = async ({ params }: Props) => {
                     {senderName} invited you to join as {invite.role.toLowerCase()}
                 </p>
 
-                <InviteResponseButtons inviteId={invite.id} workspaceId={invite.workspace.id} />
+                <InviteResponseButtons inviteId={invite.id} />
             </div>
         </div>
     )

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useClerk, useSignIn, useSignUp } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useMcpStore } from '@/store/useMcpStore';
+import { getSsoCallbackUrl, getSsoRedirect } from '@/lib/safe-redirect';
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -83,7 +84,7 @@ export default function SSOCallbackPage() {
                 if (existingSessionId) {
                     await clerk.setActive({
                         session: existingSessionId,
-                        navigate: () => router.push('/callback'),
+                        navigate: () => router.push(getSsoCallbackUrl()),
                     });
                     return;
                 }
@@ -94,7 +95,7 @@ export default function SSOCallbackPage() {
                 }
 
                 if (signIn.status === 'complete') {
-                    await signIn.finalize({ navigate: () => router.push('/callback') });
+                    await signIn.finalize({ navigate: () => router.push(getSsoCallbackUrl()) });
                     return;
                 }
 
@@ -109,7 +110,7 @@ export default function SSOCallbackPage() {
                 }
 
                 if (signUp.status === 'complete') {
-                    await signUp.finalize({ navigate: () => router.push('/callback') });
+                    await signUp.finalize({ navigate: () => router.push(getSsoCallbackUrl()) });
                     return;
                 }
 
@@ -152,7 +153,7 @@ export default function SSOCallbackPage() {
             if (mfaError) throw mfaError;
 
             if (signIn.status === 'complete') {
-                await signIn.finalize({ navigate: () => router.push('/callback') });
+                await signIn.finalize({ navigate: () => router.push(getSsoCallbackUrl()) });
                 return;
             }
 
@@ -181,6 +182,12 @@ export default function SSOCallbackPage() {
     // modal controlled by useMcpStore. So instead of a plain link, this
     // opens that modal and sends the user home.
     const handleBackToSignIn = () => {
+        // Keep the invite alive: /sign-in is a real route and reads redirect_url.
+        const invite = getSsoRedirect();
+        if (invite) {
+            router.push(`/sign-in?redirect_url=${encodeURIComponent(invite)}`);
+            return;
+        }
         setSignInModalOpen(true);
         router.push('/');
     };

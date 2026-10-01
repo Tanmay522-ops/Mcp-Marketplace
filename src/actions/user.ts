@@ -3,6 +3,7 @@
 import { clerkClient, currentUser } from "@clerk/nextjs/server"
 import { Prisma } from "@prisma/client"
 import { client } from "@/lib/prisma"
+import { syncInviteNotifications } from "@/lib/invite-notificatons"
 
 // When someone signs up via Google/GitHub, Clerk's authUser.firstName comes
 // straight from the provider's profile. When someone signs up with just
@@ -24,7 +25,11 @@ const generateWorkspaceSlug = (displayName: string, userId: string) => {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)/g, "")
-    const suffix = userId.slice(0, 6)
+    // Was userId.slice(0, 6). For cuid-style ids the first characters are
+    // time-based, so two users with the same display name created close
+    // together could get the same slug and fail on the unique constraint.
+    // The tail of an id is the random part (uuid, cuid and cuid2 alike).
+    const suffix = userId.slice(-8)
     return `${base}-${suffix}`
 }
 
@@ -58,13 +63,18 @@ export const onAuthenticateUser = async () => {
         // user with multiple email addresses could have had the wrong one
         // saved as their account email. primaryEmailAddress is the correct
         // field; falling back to [0] only if it's somehow unset.
-        const email =
+        const rawEmail =
             authUser.primaryEmailAddress?.emailAddress ??
             authUser.emailAddresses[0]?.emailAddress
 
-        if (!email) {
+        if (!rawEmail) {
             return { status: 400, message: "No email on Clerk user" }
         }
+
+        // Stored lowercase: sendInvite lowercases the invited address and
+        // looks the user up with findUnique({ where: { email } }), which is
+        // an exact match — a mixed-case row here would never be found.
+        const email = rawEmail.trim().toLowerCase()
 
         // A row can already exist under this email but a different
         // clerkId (stale dev-instance test account, a second identity
@@ -113,6 +123,9 @@ export const onAuthenticateUser = async () => {
                 include: workspaceInclude,
             })
 
+            // Pending invites sent to this email get a notification too.
+            await syncInviteNotifications(reclaimed.id, email)
+
             return { status: 200, user: reclaimed }
         }
 
@@ -148,6 +161,12 @@ export const onAuthenticateUser = async () => {
 
                 return { newUser, workspace }
             })
+
+            // Invites sent before this person had an account have no
+            // notification yet — create them now, outside the transaction
+            // (a failure here must never block sign-up; the helper catches
+            // its own errors).
+            await syncInviteNotifications(result.newUser.id, email)
 
             return {
                 status: 201,

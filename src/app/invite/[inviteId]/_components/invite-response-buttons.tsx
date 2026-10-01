@@ -1,16 +1,15 @@
 "use client"
 
-import { useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
-import { Loader2 } from 'lucide-react'
-import { acceptInvite, declineInvite } from '@/actions/invite'
+import { useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import { Loader2 } from "lucide-react"
+import { acceptInvite, declineInvite } from "@/actions/invite"
 
 type Props = {
     inviteId: string
-    workspaceId: string
 }
 
-const InviteResponseButtons = ({ inviteId, workspaceId }: Props) => {
+const InviteResponseButtons = ({ inviteId }: Props) => {
     const router = useRouter()
     const [isPending, startTransition] = useTransition()
     const [error, setError] = useState<string | null>(null)
@@ -19,24 +18,37 @@ const InviteResponseButtons = ({ inviteId, workspaceId }: Props) => {
     const handleAccept = () => {
         setError(null)
         startTransition(async () => {
-            const result = await acceptInvite(inviteId)
-            if (result.status !== 200 || !result.data) {
-                setError(result.message ?? 'Failed to accept invite')
-                return
+            try {
+                const result = await acceptInvite(inviteId)
+                if (result.status !== 200) {
+                    setError(result.message ?? "Failed to accept invite")
+                    return
+                }
+                // Refresh first so the sidebar workspace list includes the
+                // new workspace, then navigate.
+                router.refresh()
+                router.push(`/dashboard/${result.data.workspaceId}`)
+            } catch (err) {
+                console.error("acceptInvite error:", err)
+                setError("Something went wrong accepting the invite. Please try again.")
             }
-            router.push(`/dashboard/${result.data.workspaceId}`)
         })
     }
 
     const handleDecline = () => {
         setError(null)
         startTransition(async () => {
-            const result = await declineInvite(inviteId)
-            if (result.status !== 200) {
-                setError(result.message ?? 'Failed to decline invite')
-                return
+            try {
+                const result = await declineInvite(inviteId)
+                if (result.status !== 200) {
+                    setError(result.message ?? "Failed to decline invite")
+                    return
+                }
+                setDeclined(true)
+            } catch (err) {
+                console.error("declineInvite error:", err)
+                setError("Something went wrong declining the invite. Please try again.")
             }
-            setDeclined(true)
         })
     }
 
@@ -69,3 +81,5 @@ const InviteResponseButtons = ({ inviteId, workspaceId }: Props) => {
 }
 
 export default InviteResponseButtons
+
+

@@ -63,10 +63,10 @@ export const getNavGroups = (workspaceId: string): NavGroupData[] => [
                 href: `/dashboard/${workspaceId}/notifications`,
                 children: [
                     {
-                        id: 'invites',
-                        title: 'Invites',
+                        id: 'invite',
+                        title: 'Invite',
                         icon: Mail,
-                        href: `/dashboard/${workspaceId}/invites`,
+                        href: `/dashboard/${workspaceId}/invite`,
                     },
                 ],
             },
